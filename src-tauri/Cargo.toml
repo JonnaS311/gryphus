@@ -19,6 +19,17 @@ tauri-build = { workspace = true }
 
 [dependencies]
 tauri = { workspace = true }
+tauri-plugin-dialog = { workspace = true }
+gryphus-core = { workspace = true }
+gryphus-app = { workspace = true }
+gryphus-ipc = { workspace = true }
+gryphus-git = { workspace = true }
+gryphus-agents = { workspace = true }
+gryphus-fs = { workspace = true }
+gryphus-store = { workspace = true }
+
+[dev-dependencies]
+gryphus-testkit = { workspace = true }
 
 [lints]
 workspace = true

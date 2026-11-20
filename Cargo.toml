@@ -11,6 +11,12 @@ publish = false
 # Cada hito añade aquí sus dependencias cuando las usa (Cargo avisa de las no usadas).
 # Crates internos (solo los que otro crate ya usa)
 gryphus-core = { path = "crates/gryphus-core" }
+gryphus-app = { path = "crates/gryphus-app" }
+gryphus-ipc = { path = "crates/gryphus-ipc" }
+gryphus-git = { path = "crates/gryphus-git" }
+gryphus-agents = { path = "crates/gryphus-agents" }
+gryphus-fs = { path = "crates/gryphus-fs" }
+gryphus-store = { path = "crates/gryphus-store" }
 gryphus-testkit = { path = "crates/gryphus-testkit" }
 
 serde = { version = "1", features = ["derive"] }
@@ -25,6 +31,7 @@ toml = "0.8"
 portable-pty = "0.9"
 tauri = { version = "2", features = [] }
 tauri-build = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
 leptos = { version = "0.8", features = ["csr"] }
 console_error_panic_hook = "0.1"
 

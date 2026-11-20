@@ -1,6 +1,6 @@
 {
   "identifier": "default",
   "description": "Permisos de la ventana principal",
-  "windows": ["main"],
-  "permissions": ["core:default"]
+  "windows": ["main", "project-*"],
+  "permissions": ["core:default", "dialog:default"]
 }
