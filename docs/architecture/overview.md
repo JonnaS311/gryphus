@@ -120,7 +120,7 @@ Medidos con la app en **release** en Windows 11 (WebView2 158). Los mide la prue
 | Abrir directorio en el explorador (1000 archivos, vía IPC) | < 30 ms | **3 ms** (raíz: 1,6 ms) | ✅ |
 | Latencia tecla → eco (UI → IPC → PTY → agente → xterm) | < 16 ms | **18 ms** mediana, p95 18 ms | ⚠️ límite de ConPTY |
 | `git status` en repo de 10 000 archivos (adaptador) | < 150 ms | **151 ms** | ⚠️ coste de `lstat` en NTFS |
-| Arranque en frío hasta UI montada | < 400 ms | **455–477 ms** | ❌ |
+| Arranque en frío hasta UI montada (sin WebDriver) | < 400 ms | **293 ms** mediana (282–333) | ✅ |
 | Memoria en reposo, proceso Gryphus (Rust) | — | **6,9 MB** privados | ✅ |
 | Memoria en reposo, total con WebView2 | < 120 MB | 258 MB privados / 412 MB working set | ❌ presupuesto irreal para WebView2 |
 
@@ -128,7 +128,12 @@ Medidos con la app en **release** en Windows 11 (WebView2 158). Los mide la prue
 - **Eco:** ConPTY por sí solo tarda ~21 ms en el backend, medido sin Gryphus (coalescencia de 1 ms). Gryphus no añade latencia: el throttle con flanco de subida envía el primer lote de inmediato. Así se corrigió un problema real (de 52 ms a 21 ms), ver [agents.md](agents.md#piezas-internas-ptyruntime). En Linux una PTY no tiene ese coste.
 - **`git status`:** ~70 % es leer los metadatos de los archivos (ADR-005). La mejora posible es `core.fsmonitor`, como opción de configuración.
 - **Memoria:** WebView2 es Chromium multiproceso (navegador, GPU, renderer, utilidades). Su consumo base supera los 120 MB por sí solo, así que ese presupuesto no era alcanzable con Tauri en Windows. Lo que controla Gryphus, el proceso Rust, ocupa 7 MB. Propuesta: medir por separado "Gryphus < 50 MB" y "total < 300 MB".
-- **Arranque (pendiente de optimizar):** incluye crear el entorno WebView2, cargar el WASM de la UI (474 KB tras `wasm-opt`) y el bundle JS (1,1 MB). Candidatos, de mayor a menor impacto esperado:
-  1. Cargar CodeMirror y sus lenguajes bajo demanda: no hacen falta para pintar la primera pantalla.
-  2. Crear la ventana oculta y mostrarla al montar la UI, para que se vea antes y sin parpadeo.
-  3. Medir el desglose (WebView2 / JS / WASM) antes de seguir.
+- **Arranque:** se mide con `tools/measure-startup.ps1`, que lanza la app de release N veces, como la abriría un usuario, con `GRYPHUS_STARTUP_LOG`. Los 455–477 ms de la prueba e2e estaban inflados por `msedgedriver`, que lanza la app con depuración remota. Desglose (mediana):
+
+  | Fase | ms |
+  |---|---|
+  | `main` → `setup` (inicialización de Tauri) | 6 |
+  | Crear la ventana con WebView2 (lanza los procesos de Chromium) | ~250 |
+  | La página empieza a cargar → UI montada (HTML, WASM, Leptos) | ~18 |
+
+  Optimizaciones aplicadas: el pegamento JS de 1,1 MB (xterm + CodeMirror) ya no se ejecuta en el `<head>`. Se carga bajo demanda y se precarga tras montar la UI, lo que bajó la fase de la página de 46 a ~18 ms. Además, la ventana tiene fondo oscuro desde el primer frame (sin destello blanco). El resto, ~85 %, es el coste fijo de WebView2 en Windows.

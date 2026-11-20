@@ -86,6 +86,28 @@ async fn performance_budgets() {
     let app = App::start_with(&fx, true).await;
     app.wait_css("#project-path").await;
     let startup_ms = app.invoke("ui_ready", Value::Null).await;
+    // Desglose dentro de la WebView (ms desde el inicio de la navegación).
+    let startup_breakdown = app
+        .script(
+            r#"
+            const nav = performance.getEntriesByType('navigation')[0];
+            const mark = performance.getEntriesByName('ui-ready')[0];
+            const res = performance.getEntriesByType('resource').map((r) => ({
+                name: r.name.split('/').pop(),
+                start: Math.round(r.startTime),
+                end: Math.round(r.responseEnd),
+                kb: Math.round((r.decodedBodySize || 0) / 1024),
+            }));
+            return {
+                ui_ready_in_webview: mark ? Math.round(mark.startTime) : null,
+                dom_content_loaded: Math.round(nav.domContentLoadedEventEnd),
+                load_event: Math.round(nav.loadEventEnd),
+                resources: res,
+            };
+            "#,
+            vec![],
+        )
+        .await;
 
     app.open_project(&fx.root()).await;
     app.wait_css(r#".tree-row[data-path="README.md"]"#).await;
@@ -141,6 +163,7 @@ async fn performance_budgets() {
 
     let report = json!({
         "startup_ms": startup_ms,
+        "startup_breakdown": startup_breakdown,
         "memory_mb": { "app_private": app_mb, "total_private": total_private_mb, "total_working_set": total_ws_mb },
         "echo_ms": echo,
         "list_dir_1000_ms": list_dir,

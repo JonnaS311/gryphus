@@ -15,37 +15,51 @@ pub fn AgentTerminal() -> impl IntoView {
     let store = expect_context::<Store>();
     let el = NodeRef::<html::Div>::new();
     let term = StoredValue::new_local(None::<Terminal>);
+    let creating = StoredValue::new(false);
+    let ready = RwSignal::new(false);
 
-    // Crea la terminal en cuanto el contenedor existe.
+    // Crea la terminal en cuanto el contenedor existe (carga el pegamento JS si falta).
     Effect::new(move |_| {
         let Some(div) = el.get() else { return };
-        if term.with_value(Option::is_some) {
+        if creating.get_value() {
             return;
         }
-        let terminal = Terminal::new(
-            &div,
-            move |data: String| {
-                if let Some(agent) = store.selected_agent.get_untracked() {
-                    spawn_local(async move {
-                        let _ = ipc::agent_input(agent, data).await;
-                    });
+        creating.set_value(true);
+        spawn_local(async move {
+            let created = Terminal::create(
+                &div,
+                move |data: String| {
+                    if let Some(agent) = store.selected_agent.get_untracked() {
+                        spawn_local(async move {
+                            let _ = ipc::agent_input(agent, data).await;
+                        });
+                    }
+                },
+                move |cols, rows| {
+                    if let Some(agent) = store.selected_agent.get_untracked() {
+                        spawn_local(async move {
+                            let _ = ipc::agent_resize(agent, cols, rows).await;
+                        });
+                    }
+                },
+            )
+            .await;
+            match created {
+                Ok(t) => {
+                    term.set_value(Some(t));
+                    let _ = ready.try_set(true);
                 }
-            },
-            move |cols, rows| {
-                if let Some(agent) = store.selected_agent.get_untracked() {
-                    spawn_local(async move {
-                        let _ = ipc::agent_resize(agent, cols, rows).await;
-                    });
-                }
-            },
-        );
-        term.set_value(Some(terminal));
+                Err(e) => store.error.set(Some(e)),
+            }
+        });
     });
 
     // Conecta la terminal al agente seleccionado.
     Effect::new(move |_| {
         let agent = store.selected_agent.get();
-        let _ = el.get();
+        if !ready.get() {
+            return;
+        }
         term.with_value(|t| {
             let Some(t) = t else { return };
             t.reset();

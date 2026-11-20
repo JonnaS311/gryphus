@@ -6,5 +6,7 @@
 
 pub mod dialog;
 pub mod editor;
+pub mod glue;
+pub mod perf;
 pub mod tauri;
 pub mod xterm;

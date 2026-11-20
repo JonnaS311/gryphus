@@ -39,7 +39,17 @@ pub struct Terminal {
 }
 
 impl Terminal {
-    pub fn new(
+    /// Carga el pegamento JS si hace falta y crea la terminal.
+    pub async fn create(
+        el: &impl AsRef<JsValue>,
+        on_data: impl FnMut(String) + 'static,
+        on_resize: impl FnMut(u16, u16) + 'static,
+    ) -> Result<Self, String> {
+        super::glue::ensure_loaded().await?;
+        Ok(Self::new(el, on_data, on_resize))
+    }
+
+    fn new(
         el: &impl AsRef<JsValue>,
         on_data: impl FnMut(String) + 'static,
         on_resize: impl FnMut(u16, u16) + 'static,

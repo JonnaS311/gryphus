@@ -4,15 +4,38 @@
 pub mod commands;
 pub mod dto;
 pub mod events;
+pub mod startup;
 pub mod state;
 
+use tauri::webview::PageLoadEvent;
 use tauri::Manager;
 
+/// Fondo de la ventana desde el primer frame (sin destello blanco mientras carga WebView2).
+const BACKGROUND: tauri::window::Color = tauri::window::Color(0x15, 0x17, 0x1c, 0xff);
+
+/// Ventana de Gryphus (la principal y las de proyectos abiertos después).
+pub fn window_builder<'a, R: tauri::Runtime, M: Manager<R>>(
+    manager: &'a M,
+    label: &'a str,
+    title: &str,
+) -> tauri::WebviewWindowBuilder<'a, R, M> {
+    tauri::WebviewWindowBuilder::new(manager, label, tauri::WebviewUrl::App("index.html".into()))
+        .title(title)
+        .inner_size(1400.0, 900.0)
+        .min_inner_size(900.0, 560.0)
+        .background_color(BACKGROUND)
+}
+
 pub fn run() {
-    let _ = commands::PROCESS_START.set(std::time::Instant::now());
+    startup::begin();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .on_page_load(|_, payload| match payload.event() {
+            PageLoadEvent::Started => startup::trace("page_started"),
+            PageLoadEvent::Finished => startup::trace("page_finished"),
+        })
         .setup(|app| {
+            startup::trace("setup");
             // GRYPHUS_DATA_DIR aísla datos y config (pruebas e2e, perfiles separados).
             let (data_dir, config_file) = match std::env::var_os("GRYPHUS_DATA_DIR") {
                 Some(dir) => {
@@ -25,6 +48,11 @@ pub fn run() {
                 ),
             };
             app.manage(state::AppState::new(&data_dir, config_file));
+            // La ventana se crea aquí (no en tauri.conf.json) para medir su coste:
+            // crearla lanza WebView2 (~250 ms, ~85 % del arranque en frío).
+            startup::trace("window_build_start");
+            window_builder(app, "main", "Gryphus").build()?;
+            startup::trace("window_built");
             Ok(())
         })
         .on_window_event(|window, event| {

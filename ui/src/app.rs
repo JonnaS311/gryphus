@@ -15,8 +15,11 @@ use crate::views::{MainView, Welcome};
 pub fn App() -> impl IntoView {
     let store = Store::new();
     provide_context(store);
+    crate::bridge::perf::mark("ui-ready");
     spawn_local(async {
         let _ = ipc::ui_ready().await;
+        // Precarga xterm/CodeMirror fuera del camino crítico del arranque.
+        let _ = crate::bridge::glue::ensure_loaded().await;
     });
     store.refresh_project();
     register_events(store);

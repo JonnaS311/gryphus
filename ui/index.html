@@ -4,11 +4,12 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Gryphus</title>
-    <!-- Pegamento JS (xterm.js + CodeMirror), generado por ui/js (npm run build). -->
+    <!-- Pegamento JS (xterm.js + CodeMirror), generado por ui/js (npm run build).
+         Se carga bajo demanda desde ui/src/bridge/glue.rs, no aquí: ejecutarlo de
+         forma síncrona retrasaba el primer montaje de la UI. -->
     <link data-trunk rel="copy-file" href="vendor/gryphus-js.js" />
     <link data-trunk rel="css" href="vendor/gryphus-js.css" />
     <link data-trunk rel="css" href="style.css" />
-    <script src="gryphus-js.js"></script>
     <link data-trunk rel="rust" data-wasm-opt="z" />
   </head>
   <body></body>

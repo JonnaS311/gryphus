@@ -9,7 +9,7 @@ use gryphus_core::ports::{AgentChunk, ChunkSink, TermSize};
 use gryphus_core::{AgentId, FeatureId, ProjectId, WorktreeId};
 use gryphus_ipc::*;
 use tauri::ipc::{Channel, InvokeResponseBody};
-use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, State, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 
 use crate::dto;
@@ -63,16 +63,17 @@ fn project_dto(s: &ProjectSession) -> ProjectDto {
 
 // ── Métricas ─────────────────────────────────────────────────────────────────
 
-pub static PROCESS_START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 static UI_READY_MS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
 
 /// Arranque en frío: ms desde el inicio del proceso hasta que la primera UI se montó.
 #[tauri::command]
-pub fn ui_ready() -> u64 {
+pub fn ui_ready(app: AppHandle) -> u64 {
     *UI_READY_MS.get_or_init(|| {
-        PROCESS_START
-            .get()
-            .map_or(0, |t| t.elapsed().as_millis() as u64)
+        crate::startup::trace("ui_ready");
+        if crate::startup::exit_when_ready() {
+            app.exit(0);
+        }
+        crate::startup::elapsed_ms()
     })
 }
 
@@ -143,10 +144,7 @@ pub async fn open_project(
     if reuse_current {
         let _ = window.set_title(&title);
     } else {
-        WebviewWindowBuilder::new(&app, &label, WebviewUrl::App("index.html".into()))
-            .title(&title)
-            .inner_size(1400.0, 900.0)
-            .min_inner_size(900.0, 560.0)
+        crate::window_builder(&app, &label, &title)
             .build()
             .map_err(internal)?;
     }

@@ -28,8 +28,18 @@ pub struct Editor {
 }
 
 impl Editor {
+    /// Carga el pegamento JS si hace falta y crea el editor.
     /// `on_save` se llama con Ctrl+S; `on_dirty` cuando cambia el estado "sin guardar".
-    pub fn new(
+    pub async fn create(
+        el: &impl AsRef<JsValue>,
+        on_save: impl FnMut(String) + 'static,
+        on_dirty: impl FnMut(bool) + 'static,
+    ) -> Result<Self, String> {
+        super::glue::ensure_loaded().await?;
+        Ok(Self::new(el, on_save, on_dirty))
+    }
+
+    fn new(
         el: &impl AsRef<JsValue>,
         on_save: impl FnMut(String) + 'static,
         on_dirty: impl FnMut(bool) + 'static,

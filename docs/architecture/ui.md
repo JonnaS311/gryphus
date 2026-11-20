@@ -21,6 +21,8 @@ ui/
    │  ├─ tauri.rs      invoke, invoke_with_channel, listen
    │  ├─ xterm.rs      Terminal + TerminalChannel
    │  ├─ editor.rs     Editor (CodeMirror)
+│  ├─ glue.rs       carga bajo demanda de ui/vendor/gryphus-js.js
+│  ├─ perf.rs       performance.mark (medición del arranque)
    │  └─ dialog.rs     confirm()
    ├─ panels/          agents.rs (izquierda), explorer.rs (derecha), statusbar.rs
    └─ views/           main_view.rs, terminal.rs, editor.rs, diff.rs, welcome.rs
@@ -57,7 +59,7 @@ Reglas (verificadas por `tools/arch-guard`):
 - Los bytes de salida van del backend a xterm sin copias en WASM ni JSON.
 - Árbol perezoso y listas que solo se repintan si cambian.
 - WASM de release con `opt-level = "z"`, LTO y `wasm-opt`.
-- Pendiente (hito 10): el bundle JS pesa 1,1 MB minificado, con 7 lenguajes de CodeMirror incluidos. Se puede reducir cargando los lenguajes bajo demanda.
+- El pegamento JS (1,1 MB: xterm + CodeMirror) **no está en el camino crítico del arranque**. `bridge/glue.rs` lo inyecta bajo demanda y `App` lo precarga en segundo plano tras montar la UI; `Terminal::create` y `Editor::create` esperan a que esté listo.
 
 ## Atajos
 

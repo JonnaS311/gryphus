@@ -61,20 +61,32 @@ pub fn CodeEditor() -> impl IntoView {
         });
     };
 
+    // Crea el editor (carga el pegamento JS si falta) y abre el archivo pendiente.
+    let creating = StoredValue::new(false);
     Effect::new(move |_| {
         let Some(div) = el.get() else { return };
-        if editor.with_value(Option::is_some) {
+        if creating.get_value() {
             return;
         }
-        editor.set_value(Some(Editor::new(&div, save, move |d| {
-            set_dirty.set(d);
-            if d {
-                set_saved_flash.set(false);
+        creating.set_value(true);
+        spawn_local(async move {
+            let created = Editor::create(&div, save, move |d| {
+                set_dirty.set(d);
+                if d {
+                    set_saved_flash.set(false);
+                }
+            })
+            .await;
+            match created {
+                Ok(e) => {
+                    editor.set_value(Some(e));
+                    if let Some(file) = store.open_file.get_untracked() {
+                        load(file);
+                    }
+                }
+                Err(e) => store.error.set(Some(e)),
             }
-        })));
-        if let Some(file) = store.open_file.get_untracked() {
-            load(file);
-        }
+        });
     });
 
     Effect::new(move |prev: Option<Option<OpenFile>>| {
