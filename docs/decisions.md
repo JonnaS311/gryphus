@@ -32,9 +32,22 @@ Formato corto: decisión, motivo, alternativa descartada. Una decisión nueva o 
 - **Motivo:** si un comando cambia de firma, el backend y la UI dejan de compilar a la vez. Elimina `specta` y la comprobación de bindings en CI.
 - **Regla:** `gryphus-ipc` no depende de `gryphus-core`; `src-tauri` traduce dominio ⇄ DTO. Así la UI no arrastra el dominio y el dominio puede cambiar sin romper el contrato.
 
-### ADR-005 — Git híbrido: gix para lecturas, CLI git para mutaciones
-- **Motivo:** lecturas frecuentes en proceso (rápidas); mutaciones con la herramienta de referencia (seguras).
-- **Alternativa:** `git2` (libgit2): dependencia C, soporte de worktrees más limitado.
+### ADR-005 — Git sobre la CLI (revisada en el hito 3)
+- **Decisión original:** `gix` para lecturas, CLI para mutaciones.
+- **Decisión actual:** todo sobre la CLI de `git`, con salidas para máquinas (`--porcelain=v2 -z`, `for-each-ref --format`). Las lecturas usan `GIT_OPTIONAL_LOCKS=0` para no competir por `index.lock` con los agentes.
+- **Medición** (Windows 11, NTFS, repo de 10 000 archivos, 10 modificados):
+
+  | Operación | Mediana |
+  |---|---|
+  | lanzar `git --version` (coste del proceso) | 14 ms |
+  | `diff-files` (solo `lstat` de los archivos seguidos) | 106 ms |
+  | `status --porcelain=v2 -uall` | 151 ms |
+  | `status` con `core.untrackedCache` | 148 ms |
+  | `list_worktrees` vía adaptador | 18 ms |
+
+- **Motivo:** ~70 % del coste de `status` es el `lstat` de 10 000 archivos en NTFS, y `gix` tendría que hacer esas mismas llamadas; como mucho ahorraría los ~14 ms del proceso. A cambio, la CLI no tiene API cambiante, ni coste de compilación, y se comporta exactamente como el git del usuario. `status` corre en segundo plano y solo tras cambios en disco, así que no bloquea la UI.
+- **Si hace falta más velocidad:** `core.fsmonitor=true` (monitor integrado de git en Windows/macOS) evita el `lstat` por completo. Será una opción de configuración, porque arranca un daemon por repo.
+- **Alternativas:** `gix` (ver motivo) o `git2`/libgit2 (dependencia C, soporte de worktrees limitado).
 
 ### ADR-006 — Agentes en PTY con ring buffer en Rust
 - **Motivo:** los CLIs de agente son TUIs interactivas; la PTY es la única forma fiel. El scrollback en Rust permite una sola instancia de xterm en la UI.

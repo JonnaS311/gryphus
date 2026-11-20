@@ -57,6 +57,18 @@ impl TempRepo {
         &self.base
     }
 
+    /// Variables de entorno que aíslan git de la configuración del desarrollador.
+    /// Úsalas también en el adaptador bajo prueba para que vea el mismo repo igual.
+    pub fn git_env(&self) -> Vec<(String, String)> {
+        vec![
+            (
+                "GIT_CONFIG_GLOBAL".to_owned(),
+                self.git_config.to_string_lossy().into_owned(),
+            ),
+            ("GIT_CONFIG_NOSYSTEM".to_owned(), "1".to_owned()),
+        ]
+    }
+
     /// Ruta (aún inexistente) para un worktree nuevo.
     pub fn worktree_path(&self, name: &str) -> PathBuf {
         self.base.join("worktrees").join(name)

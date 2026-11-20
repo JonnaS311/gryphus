@@ -1,11 +1,20 @@
 [package]
 name = "gryphus-git"
-description = "Adaptador GitPort: gix para lecturas, CLI git para mutaciones."
+description = "Adaptador GitPort sobre la CLI de git (salidas porcelain/-z)."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+gryphus-core = { workspace = true }
+
+[dev-dependencies]
+gryphus-testkit = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "status"
+harness = false
 
 [lints]
 workspace = true

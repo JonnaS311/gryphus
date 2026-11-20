@@ -1,16 +1,25 @@
 # Integración git (`gryphus-git`)
 
-Implementa `GitPort`. Estrategia híbrida para priorizar velocidad sin perder fiabilidad:
+Implementa `GitPort` con `CliGit`, que ejecuta el binario `git` (decisión y mediciones en [ADR-005](../decisions.md#adr-005--git-sobre-la-cli-revisada-en-el-hito-3)).
 
-| Operación | Implementación | Por qué |
-|---|---|---|
-| Info del repo, branches, ahead/behind | `gix` (gitoxide) | En proceso, sin lanzar procesos; muy rápido |
-| Listar worktrees | `gix` | Lectura de `.git/worktrees` |
-| Status | `gix` (status con índice) | Se ejecuta a menudo; evitar `fork` |
-| Diff | `gix` + `imara-diff` | Rápido y sin dependencias de C |
-| `worktree add/remove`, crear branch | **CLI `git`** | Mutaciones: usamos la herramienta de referencia para no corromper nada |
+| Operación | Comando |
+|---|---|
+| Info del repo | `rev-parse --show-toplevel` + `symbolic-ref --short HEAD` |
+| Branches, upstream, ahead/behind, checkout | `for-each-ref --format=%(refname)%00%(upstream:short)%00%(upstream:track,nobracket)%00%(worktreepath)` |
+| Worktrees | `worktree list --porcelain -z` |
+| Status | `status --porcelain=v2 -z --untracked-files=all` |
+| Diff | `diff --no-renames -U3 <base> --` + `ls-files --others --exclude-standard -z` (los archivos sin seguimiento se añaden como "todo añadido"; binarios o > 1 MiB se marcan `binary`) |
+| Merge-base | `merge-base HEAD <branch>` |
+| Crear/eliminar worktree | `worktree add [-b]` / `worktree remove [--force]` |
 
-Si alguna lectura de `gix` no cubre un caso (p. ej. configuraciones raras), el adaptador cae a la CLI. Las dos implementaciones pasan **la misma suite de pruebas de contrato** (ver [testing.md](../testing.md#pruebas-de-contrato)).
+Detalles del adaptador:
+- Todas las invocaciones usan `-c core.quotepath=false -c color.ui=false`, `LC_ALL=C` (para clasificar los errores por su texto en inglés) y `GIT_TERMINAL_PROMPT=0`. En Windows se lanzan sin ventana de consola.
+- Las lecturas usan `GIT_OPTIONAL_LOCKS=0`.
+- Los errores se clasifican en `PortErrorKind` según el stderr (`classify_failure`, con pruebas sobre mensajes reales).
+- Una `base` que empiece por `-` se rechaza (evita inyectar opciones).
+- Los parsers son funciones puras con pruebas sobre salidas fijas, incluidas rutas con comillas C, espacios y no-ASCII.
+
+`CliGit` pasa **los 16 casos del contrato** contra repos reales (ver [testing.md](../testing.md#pruebas-de-contrato)) y 10 casos propios. Benchmark: `cargo bench -p gryphus-git`.
 
 ## Worktrees y features
 

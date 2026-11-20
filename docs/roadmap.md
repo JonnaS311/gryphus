@@ -9,8 +9,8 @@ Estado: ✅ hecho · ⏳ siguiente
 | 0 ✅ | Esqueleto | Workspace Cargo, crates vacíos (incl. `gryphus-ipc`), `src-tauri`, `ui/` (Leptos CSR + Trunk), CI con fmt/clippy/test, guardias de dependencias | CI verde con una prueba trivial por crate; la app abre una ventana Leptos vacía |
 | 1 ✅ | Dominio | Entidades, invariantes, errores, puertos y eventos en `gryphus-core` | Unitarias + `proptest` de invariantes |
 | 2 ✅ | Testkit | Fakes de todos los puertos, `TempRepo`, `fake-agent`, suites de contrato | Contratos pasan contra los fakes |
-| 3 ⏳ | Git | `GixGit` + mutaciones por CLI | Contrato git contra adaptador real; benchmark de status |
-| 4 | Fs y store | Árbol perezoso, lectura/escritura atómica, watcher, persistencia JSON | Contratos fs/store; pruebas de path traversal |
+| 3 ✅ | Git | `GixGit` + mutaciones por CLI | Contrato git contra adaptador real; benchmark de status |
+| 4 ⏳ | Fs y store | Árbol perezoso, lectura/escritura atómica, watcher, persistencia JSON | Contratos fs/store; pruebas de path traversal |
 | 5 | Agentes | Supervisor PTY, ring buffer, coalescencia, config de proveedores | Integración con `fake-agent` (eco, flood, exit code) |
 | 6 | Casos de uso | `ProjectSession`, `FeatureService`, `AgentService`, `GitRefresher` | Unitarias con fakes de cada flujo |
 | 7 | IPC | DTOs en `gryphus-ipc`, comandos, Channels, eventos, `WindowRegistry` | Pruebas de comandos con `tauri::test`; mapeos dominio ⇄ DTO |
