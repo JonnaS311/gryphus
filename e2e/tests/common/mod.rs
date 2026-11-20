@@ -1,0 +1,316 @@
+//! Arnés e2e: compila la app con el frontend embebido, arranca `tauri-driver`
+//! (que lanza la app real dentro de su WebView) y ofrece ayudas de espera.
+
+#![allow(dead_code)]
+
+use std::future::Future;
+use std::net::{TcpListener, TcpStream};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
+
+use fantoccini::{Client, ClientBuilder, Locator};
+use gryphus_testkit::{fake_agent_bin, TempRepo};
+use serde_json::{json, Value};
+
+pub const TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Secuencias de teclas WebDriver (W3C).
+pub const ENTER: &str = "\u{E007}";
+pub const CTRL: &str = "\u{E009}";
+pub const END: &str = "\u{E010}";
+pub const RELEASE: &str = "\u{E000}";
+
+pub fn enabled() -> bool {
+    std::env::var("GRYPHUS_E2E").is_ok_and(|v| v == "1")
+}
+
+/// Las pruebas e2e comparten puertos y ventanas: se ejecutan de una en una.
+pub static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+fn workspace() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("e2e está en la raíz del workspace")
+        .to_path_buf()
+}
+
+fn run(cmd: &mut Command) {
+    let status = cmd
+        .status()
+        .unwrap_or_else(|e| panic!("no se pudo ejecutar {cmd:?}: {e}"));
+    assert!(status.success(), "falló {cmd:?}");
+}
+
+/// Compila la UI y la app con el frontend embebido (una vez por proceso).
+pub fn app_binary() -> PathBuf {
+    static BIN: OnceLock<PathBuf> = OnceLock::new();
+    BIN.get_or_init(|| {
+        let ws = workspace();
+        run(Command::new("trunk")
+            .args(["--config", "ui/Trunk.toml", "build"])
+            .current_dir(&ws));
+        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+        run(Command::new(cargo)
+            .args([
+                "build",
+                "-p",
+                "gryphus-desktop",
+                "--features",
+                "custom-protocol",
+                "--target-dir",
+                "target/e2e",
+            ])
+            .current_dir(&ws));
+        let exe = if cfg!(windows) {
+            "gryphus.exe"
+        } else {
+            "gryphus"
+        };
+        ws.join("target").join("e2e").join("debug").join(exe)
+    })
+    .clone()
+}
+
+/// `msedgedriver` (Windows) igual a la versión de WebView2. En Linux no hace falta.
+fn native_driver() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("GRYPHUS_NATIVE_DRIVER") {
+        return Some(path.into());
+    }
+    if !cfg!(windows) {
+        return None;
+    }
+    let tools = workspace().join("target").join("e2e-tools");
+    std::fs::read_dir(tools)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|e| e.path().join("msedgedriver.exe"))
+        .find(|p| p.is_file())
+}
+
+fn free_port() -> u16 {
+    TcpListener::bind("127.0.0.1:0")
+        .and_then(|l| l.local_addr())
+        .map(|a| a.port())
+        .expect("puerto libre")
+}
+
+/// Repo temporal + directorio de datos con los tres proveedores apuntando a fake-agent.
+pub struct Fixture {
+    pub repo: TempRepo,
+    pub data: PathBuf,
+}
+
+impl Fixture {
+    pub fn new() -> Self {
+        let repo = TempRepo::new();
+        let data = repo.base().join("appdata");
+        std::fs::create_dir_all(&data).unwrap();
+        let bin = fake_agent_bin();
+        let config: String = ["opencode", "claude", "codex"]
+            .iter()
+            .map(|p| format!("[agents.{p}]\ncommand = '{}'\n\n", bin.display()))
+            .collect();
+        std::fs::write(data.join("config.toml"), config).unwrap();
+        Self { repo, data }
+    }
+
+    pub fn root(&self) -> String {
+        self.repo.root().to_string_lossy().into_owned()
+    }
+}
+
+pub struct App {
+    pub client: Client,
+    driver: tokio::process::Child,
+}
+
+pub async fn wait_for<F, Fut>(what: &str, mut cond: F)
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = bool>,
+{
+    let start = Instant::now();
+    while start.elapsed() < TIMEOUT {
+        if cond().await {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("tiempo agotado esperando: {what}");
+}
+
+impl App {
+    pub async fn start(fixture: &Fixture) -> Self {
+        let exe = app_binary();
+        let port = free_port();
+        let native_port = free_port();
+        let mut cmd = tokio::process::Command::new("tauri-driver");
+        cmd.args([
+            "--port",
+            &port.to_string(),
+            "--native-port",
+            &native_port.to_string(),
+        ])
+        .env("GRYPHUS_DATA_DIR", &fixture.data)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+        if let Some(native) = native_driver() {
+            cmd.arg("--native-driver").arg(native);
+        }
+        let driver = cmd
+            .spawn()
+            .expect("no se pudo lanzar tauri-driver (cargo install tauri-driver --locked)");
+        let addr = format!("127.0.0.1:{port}");
+        wait_for("tauri-driver", || async {
+            TcpStream::connect(&addr).is_ok()
+        })
+        .await;
+
+        let mut caps = serde_json::Map::new();
+        caps.insert("browserName".into(), json!("wry"));
+        caps.insert("tauri:options".into(), json!({ "application": exe }));
+        let client = ClientBuilder::native()
+            .capabilities(caps)
+            .connect(&format!("http://{addr}"))
+            .await
+            .expect("sesión WebDriver con la app");
+        Self { client, driver }
+    }
+
+    /// Cierra la ventana (la app guarda y detiene sus agentes) y el driver.
+    pub async fn quit(mut self) {
+        let _ = self.client.close().await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let _ = self.driver.kill().await;
+    }
+
+    pub async fn exists(&self, css: &str) -> bool {
+        self.client.find(Locator::Css(css)).await.is_ok()
+    }
+
+    pub async fn wait_css(&self, css: &str) {
+        wait_for(css, || self.exists(css)).await;
+    }
+
+    pub async fn wait_gone(&self, css: &str) {
+        wait_for(&format!("que desaparezca {css}"), || async {
+            !self.exists(css).await
+        })
+        .await;
+    }
+
+    pub async fn text(&self, css: &str) -> String {
+        match self.client.find(Locator::Css(css)).await {
+            Ok(el) => el.text().await.unwrap_or_default(),
+            Err(_) => String::new(),
+        }
+    }
+
+    pub async fn wait_text(&self, css: &str, needle: &str) {
+        wait_for(&format!("{needle:?} en {css}"), || async {
+            self.text(css).await.contains(needle)
+        })
+        .await;
+    }
+
+    pub async fn click(&self, css: &str) {
+        self.wait_css(css).await;
+        self.client
+            .find(Locator::Css(css))
+            .await
+            .unwrap()
+            .click()
+            .await
+            .unwrap_or_else(|e| panic!("clic en {css}: {e}"));
+    }
+
+    pub async fn click_xpath(&self, xpath: &str) {
+        wait_for(xpath, || async {
+            self.client.find(Locator::XPath(xpath)).await.is_ok()
+        })
+        .await;
+        self.client
+            .find(Locator::XPath(xpath))
+            .await
+            .unwrap()
+            .click()
+            .await
+            .unwrap();
+    }
+
+    /// Escribe en el elemento con foco (tras hacer clic en `css`).
+    pub async fn type_into(&self, css: &str, keys: &str) {
+        self.click(css).await;
+        self.type_active(keys).await;
+    }
+
+    pub async fn type_active(&self, keys: &str) {
+        self.client
+            .active_element()
+            .await
+            .unwrap()
+            .send_keys(keys)
+            .await
+            .unwrap();
+    }
+
+    pub async fn script(&self, js: &str, args: Vec<Value>) -> Value {
+        self.client.execute(js, args).await.expect("script")
+    }
+
+    pub async fn terminal_text(&self) -> String {
+        self.script("return window.GryphusJs.debugTerminalText();", vec![])
+            .await
+            .as_str()
+            .unwrap_or_default()
+            .to_owned()
+    }
+
+    pub async fn wait_terminal(&self, needle: &str) {
+        wait_for(&format!("{needle:?} en la terminal"), || async {
+            self.terminal_text().await.contains(needle)
+        })
+        .await;
+    }
+
+    /// Las confirmaciones nativas se aceptan automáticamente (y se registran).
+    pub async fn auto_confirm(&self) {
+        self.script(
+            "window.__confirms = []; window.confirm = (m) => { window.__confirms.push(m); return true; }; return null;",
+            vec![],
+        )
+        .await;
+    }
+
+    pub async fn invoke(&self, cmd: &str, req: Value) -> Value {
+        self.script(
+            "return window.__TAURI__.core.invoke(arguments[0], { req: arguments[1] });",
+            vec![json!(cmd), req],
+        )
+        .await
+    }
+
+    pub async fn open_project(&self, path: &str) {
+        self.wait_css("#project-path").await;
+        self.client
+            .find(Locator::Css("#project-path"))
+            .await
+            .unwrap()
+            .send_keys(path)
+            .await
+            .unwrap();
+        self.click("#open-path").await;
+        self.wait_css(".shell").await;
+    }
+
+    pub async fn screenshot(&self, name: &str) {
+        let dir = workspace().join("target").join("e2e-screens");
+        std::fs::create_dir_all(&dir).unwrap();
+        if let Ok(png) = self.client.screenshot().await {
+            std::fs::write(dir.join(format!("{name}.png")), png).unwrap();
+        }
+    }
+}

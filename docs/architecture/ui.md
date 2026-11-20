@@ -1,67 +1,85 @@
 # Frontend (`ui/`)
 
-**Leptos en modo CSR, compilado a WASM con Trunk.** Todo en Rust; reactividad fina por señales (sin DOM virtual). Ver [ADR-010](../decisions.md#adr-010--leptos-csr-wasm-para-la-ui).
-
-| Necesidad | Solución |
-|---|---|
-| Componentes y estado | Leptos (señales, `Resource` para datos de IPC) |
-| Llamadas IPC | `gryphus-ipc` (tipos compartidos) + `bridge/tauri.rs` |
-| Terminal del agente | `xterm.js` + addon WebGL + addon fit, vía `bridge/xterm.rs` |
-| Editor de código | CodeMirror 6 (lenguajes cargados bajo demanda), vía `bridge/editor.rs` |
-| Diff | `@codemirror/merge` (lado a lado y unificado), vía `bridge/editor.rs` |
-
-## Layout
-
-Tres paneles redimensionables y una barra de estado:
-
-| Zona | Componente | Fuente de datos |
-|---|---|---|
-| Izquierda | `AgentsPanel` → `FeatureItem` → `WorktreeItem`, `AgentItem` | `get_project`, eventos `feature:changed`, `agent:status` |
-| Centro | `MainView` con pestañas: `AgentTerminal`, `CodeEditor`, `DiffView` | `attach_agent`, `read_file`, `git_diff` |
-| Derecha | `FileExplorer` (árbol perezoso del worktree activo) | `list_dir`, `git_status`, `fs:changed` |
-| Abajo | `StatusBar` | `git_overview` |
+**Leptos 0.8 en modo CSR, compilado a WASM con Trunk.** Todo en Rust salvo un pegamento JS mínimo para xterm.js y CodeMirror 6. Ver [ADR-010](../decisions.md#adr-010--leptos-csr-wasm-para-la-ui).
 
 ## Estructura
 
 ```
 ui/
-├─ Cargo.toml       # crate cdylib/bin para wasm32-unknown-unknown; depende de leptos y gryphus-ipc
-├─ Trunk.toml
-├─ index.html
-├─ js/              # glue JS mínimo: crea/destruye xterm y CodeMirror, expone funciones planas
+├─ index.html, style.css, Trunk.toml
+├─ js/                 pegamento JS (npm + esbuild): src/index.js, src/stream.js, test/
+├─ vendor/             gryphus-js.js + .css generados por `npm run build` (versionados:
+│                      compilar la app no requiere Node)
 └─ src/
-   ├─ main.rs       # monta <App/>
-   ├─ bridge/       # ÚNICO lugar con wasm-bindgen / JS
-   │  ├─ tauri.rs   # invoke, listen, Channel  (window.__TAURI__ con withGlobalTauri)
-   │  ├─ xterm.rs
-   │  └─ editor.rs
-   ├─ ipc/          # API tipada: fn create_feature(req) -> Result<Feature, IpcError> (usa bridge/tauri)
-   ├─ state/        # señales globales: ProjectState, ViewState, GitState (provide_context)
-   ├─ panels/       # AgentsPanel, FileExplorer, StatusBar
-   ├─ views/        # MainView, AgentTerminal, CodeEditor, DiffView
-   └─ components/   # piezas pequeñas reutilizables
+   ├─ main.rs          monta <App/>
+   ├─ app.rs           bienvenida o espacio de trabajo, eventos de Rust, atajos
+   ├─ store.rs         estado global (señales): proyecto, selección, vista, status, ticks
+   ├─ logic.rs         reglas de presentación PURAS (con pruebas nativas)
+   ├─ layout.rs        CenterView (pestañas) y atajos
+   ├─ ipc.rs           API tipada del backend (única capa que llama al bridge de Tauri)
+   ├─ bridge/          ÚNICO lugar con wasm-bindgen / js-sys / web-sys
+   │  ├─ tauri.rs      invoke, invoke_with_channel, listen
+   │  ├─ xterm.rs      Terminal + TerminalChannel
+   │  ├─ editor.rs     Editor (CodeMirror)
+   │  └─ dialog.rs     confirm()
+   ├─ panels/          agents.rs (izquierda), explorer.rs (derecha), statusbar.rs
+   └─ views/           main_view.rs, terminal.rs, editor.rs, diff.rs, welcome.rs
 ```
 
-Reglas:
-- **Solo `bridge/` usa `wasm-bindgen` o toca JS.** El resto de la UI es Rust normal.
-- **Solo `ipc/` llama al bridge de Tauri.** Paneles y vistas usan `state/` e `ipc/`. `ipc/` se define detrás de un trait `IpcClient` para poder inyectar un cliente falso en pruebas.
-- **El estado de negocio vive en el backend.** `state/` es caché de lo que devuelve el backend + estado puro de UI (pestaña activa, tamaños de panel).
-- **Worktree activo** = el del agente o archivo seleccionado; el explorador y la barra de estado siguen al worktree activo.
+Reglas (verificadas por `tools/arch-guard`):
+- **Solo `bridge/` toca JS.**
+- **Solo `ipc.rs` llama al bridge de Tauri.** Paneles y vistas usan `store` e `ipc`.
+- **El estado de negocio vive en Rust.** `store` es caché de lo que devuelve el backend más estado puro de UI (pestaña, selección, carpetas expandidas).
 
-## Eficiencia en la UI
+## Layout
 
-- Una sola instancia de xterm en la vista central; al cambiar de agente se limpia y se re-adjunta (el scrollback viene del backend).
-- Los bytes del Channel PTY pasan del bridge a xterm sin convertirlos a `String` en Rust (`Uint8Array` directo).
-- El árbol del explorador carga un nivel por expansión y virtualiza listas largas.
-- Los diffs grandes se muestran por archivo, plegados, y se expanden bajo demanda.
-- Build de release con `opt-level = "z"`, `lto = true` y `wasm-opt` para un WASM pequeño.
+| Zona | Componente | Datos |
+|---|---|---|
+| Izquierda | `AgentsPanel` → `FeatureItem` → `WorktreeRow`, `AgentRow`, `NewAgent`; `NewFeatureForm` | `get_project`; eventos `feature:*`, `agent:status`, `worktrees:changed` |
+| Centro | `MainView` con pestañas `AgentTerminal`, `CodeEditor`, `DiffView` (las tres montadas; se ocultan con CSS) | `attach_agent`, `read_file`/`write_file`, `git_diff` |
+| Derecha | `Explorer` → `TreeDir`/`TreeEntry` recursivos y perezosos | `list_dir`, `git_status`, `fs:changed` |
+| Abajo | `StatusBar` (branch, ↑↓, cambios, agentes activos, ruta) | `git_overview`, `git_status` |
+| Sin proyecto | `Welcome` (diálogo nativo o ruta escrita) | `pick_folder`, `open_project` |
 
-## Atajos (inicial)
+**Worktree activo:** el del agente seleccionado o el que se elija en el panel izquierdo. El explorador, el diff y la barra de estado lo siguen.
+
+## Flujo de datos
+
+- **Eventos → señales:** `feature:*` y `worktrees:changed` recargan el proyecto. `agent:status` actualiza el estado del agente en sitio. `fs:changed` incrementa `fs_tick`, con lo que los directorios visibles se vuelven a listar y el archivo abierto se recarga si no tiene cambios sin guardar. `git:changed` del worktree activo incrementa `git_tick`, que recarga status, resumen y diff.
+- **Salida de agentes sin pasar por WASM:** `Terminal::channel()` crea un `Channel` de Tauri en JS cuyo `onmessage` decodifica el formato binario y escribe directo en xterm. La entrada (`onData`) y el tamaño (`onResize`) sí pasan por Rust → `agent_input` / `agent_resize`.
+- **Una terminal por ventana:** al cambiar de agente se reinicia y se vuelve a conectar; el backend reenvía el scrollback.
+- **Editor:** Ctrl+S guarda (escritura atómica en Rust). Un indicador ● marca cambios sin guardar. Cargar otro archivo reinicia el historial de deshacer.
+- **Explorador:** carga un nivel por expansión. El estado expandido vive en el `store`, así que sobrevive a las recargas causadas por cambios en disco (este fallo lo detectaron las pruebas e2e). Un listado solo se reemplaza si cambió.
+
+## Eficiencia
+
+- Una sola instancia de xterm (WebGL, con DOM como respaldo) y una de CodeMirror por ventana.
+- Los bytes de salida van del backend a xterm sin copias en WASM ni JSON.
+- Árbol perezoso y listas que solo se repintan si cambian.
+- WASM de release con `opt-level = "z"`, LTO y `wasm-opt`.
+- Pendiente (hito 10): el bundle JS pesa 1,1 MB minificado, con 7 lenguajes de CodeMirror incluidos. Se puede reducir cargando los lenguajes bajo demanda.
+
+## Atajos
 
 | Atajo | Acción |
 |---|---|
 | `Ctrl+1/2/3` | Pestaña Agente / Editor / Diff |
-| `Ctrl+N` | Nueva feature |
-| `Ctrl+Shift+A` | Nuevo agente en la feature seleccionada |
-| `Ctrl+S` | Guardar archivo |
-| `Ctrl+P` | Buscar archivo en el worktree activo |
+| `Ctrl+S` | Guardar (en el editor) |
+
+## Pegamento JS (`ui/js`)
+
+```
+cd ui/js && npm install && npm test && npm run build   # regenera ui/vendor/
+```
+
+Expone `window.GryphusJs.createTerminal`, `createEditor` y `debugTerminalText` (gancho para e2e). `src/stream.js` decodifica el mismo formato que `gryphus_ipc::stream`; `npm test` lo verifica.
+
+## Pruebas
+
+| Nivel | Qué |
+|---|---|
+| `cargo test -p gryphus-ui` | `logic.rs` y `layout.rs` (nativo, sin navegador) |
+| `npm test` en `ui/js` | decodificador del formato binario |
+| e2e (`gryphus-e2e`) | la UI real dentro de la app: ver [testing.md](../testing.md#e2e) |
+
+Desviación del plan: no hay pruebas de componentes con `wasm-bindgen-test`. Los componentes se cubren con e2e contra la app real, que además verifican la integración con xterm, CodeMirror y Tauri. Esa integración no se probaría en un navegador aislado.

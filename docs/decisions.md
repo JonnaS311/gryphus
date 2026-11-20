@@ -73,6 +73,11 @@ Formato corto: decisión, motivo, alternativa descartada. Una decisión nueva o 
 - **Decisión:** al cerrar la app se detienen los agentes; al reabrir aparecen en `Exited` y se reinician con un clic en el mismo worktree.
 - **Motivo:** evita procesos huérfanos y un daemon en segundo plano; mantiene el sistema simple.
 
+### ADR-015 — E2E en Rust con `fantoccini`
+- **Decisión:** las pruebas e2e son un crate Rust (`e2e/`) con el cliente WebDriver `fantoccini`, en lugar de WebdriverIO.
+- **Motivo:** coherente con "todo en Rust" (ADR-010). Reutiliza `TempRepo` y `fake_agent_bin()` del testkit y se ejecuta con `cargo test`.
+- **Detalles:** el binario e2e se compila con la feature `custom-protocol` (frontend embebido) en `target/e2e`. `GRYPHUS_DATA_DIR` aísla datos y config.
+
 ### ADR-014 — E2E solo en Windows y Linux
 - **Decisión:** la suite e2e corre en CI en Windows y Linux.
 - **Motivo:** `tauri-driver` no soporta WKWebView en macOS. En macOS se cubre con pruebas unitarias, de integración y de componentes.

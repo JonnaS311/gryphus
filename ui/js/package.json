@@ -1,0 +1,29 @@
+{
+  "name": "gryphus-js",
+  "private": true,
+  "type": "module",
+  "description": "Pegamento JS mínimo de la UI: xterm.js y CodeMirror 6. Se empaqueta en ui/vendor/ (versionado) para que compilar la app no requiera Node.",
+  "scripts": {
+    "build": "esbuild src/index.js --bundle --minify --format=iife --global-name=GryphusJs --target=es2022 --outfile=../vendor/gryphus-js.js",
+    "test": "node --test test/stream.test.mjs"
+  },
+  "dependencies": {
+    "@codemirror/lang-css": "^6.3.1",
+    "@codemirror/lang-html": "^6.4.9",
+    "@codemirror/lang-javascript": "^6.2.3",
+    "@codemirror/lang-json": "^6.0.1",
+    "@codemirror/lang-markdown": "^6.3.2",
+    "@codemirror/lang-python": "^6.1.7",
+    "@codemirror/lang-rust": "^6.0.1",
+    "@codemirror/state": "^6.5.2",
+    "@codemirror/theme-one-dark": "^6.1.2",
+    "@codemirror/view": "^6.36.5",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-webgl": "^0.18.0",
+    "@xterm/xterm": "^5.5.0",
+    "codemirror": "^6.0.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

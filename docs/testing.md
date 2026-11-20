@@ -10,9 +10,12 @@ Todo el desarrollo es **orientado a pruebas (TDD)**: primero la prueba que falla
 | Unitarias de casos de uso | `gryphus-app` | Orquestación con **fakes** de todos los puertos | `gryphus-testkit` | ms |
 | Contrato de puertos | `gryphus-testkit` | Una suite por puerto que corren el fake **y** el adaptador real | macros de suite compartida | ms–s |
 | Integración de adaptadores | `gryphus-git`, `-agents`, `-fs`, `-store` | IO real: repos git temporales, PTY con `fake-agent`, disco temporal | `tempfile`, `fake-agent` | s |
-| UI lógica | `ui/` | Estado (`state/`) y transformaciones con `IpcClient` falso | `cargo test` (nativo, sin navegador) | ms |
-| UI componentes | `ui/` | Render de componentes Leptos y reacción a señales | `wasm-bindgen-test` en navegador headless | s |
-| E2E | `e2e/` | App real completa, flujos de usuario | WebdriverIO + `tauri-driver` | min |
+| Backend completo | `src-tauri/tests/backend.rs` | Casos de uso con **todos** los adaptadores reales, sin UI | `TempRepo`, `fake-agent` | s |
+| UI lógica | `ui/src/logic.rs` | Reglas de presentación puras | `cargo test` (nativo) | ms |
+| Pegamento JS | `ui/js/test` | Decodificador del formato binario de salida | `node --test` | ms |
+| E2E | `e2e/` | App real (WebView) completa, flujos de usuario | Rust + `fantoccini` + `tauri-driver` | s |
+
+Estado actual: **233 pruebas** en `cargo test --workspace`, todas en verde. Incluyen las 3 e2e, que sin `GRYPHUS_E2E=1` se cuentan pero no hacen nada. Aparte hay 4 pruebas de JS. Las pruebas de componentes con `wasm-bindgen-test` previstas al inicio se sustituyeron por e2e contra la app real (ver [ui.md](architecture/ui.md#pruebas)).
 
 ## Pruebas de contrato
 
@@ -37,7 +40,7 @@ gryphus_testkit::git_contract!(Harness::new);
 | `StorePort` | `store_contract!` | 6 | ida y vuelta, sobrescritura, config por defecto, `Corrupted` si el JSON es ilegible o viola invariantes |
 | `AgentRuntimePort` | `agents_contract!` | 10 | Scrollback antes que Data, eco, código de salida, `on_exit` exactamente una vez, flood completo y en orden, relanzar, `Unavailable`, `NotFound` |
 
-Estado actual: los **fakes pasan los 43 casos**. Cada adaptador real los ejecutará en su hito (3: git, 4: fs y store, 5: agentes).
+Estado actual: los 43 casos pasan **contra los fakes y contra los adaptadores reales** (`CliGit`, `LocalFs`, `JsonStore`, `PtyRuntime` con ConPTY).
 
 La eficacia de los contratos está comprobada: al quitar del `FakeGit` el reporte de archivos borrados, falla exactamente `status_reports_untracked_modified_and_deleted` con un diff claro.
 
@@ -59,7 +62,29 @@ Todos tienen `fail_next(err)` para simular el fallo de la próxima llamada.
 - `RecordingEventSink`, `CollectingChunkSink`, `CollectingFsSink`: acumulan lo recibido para hacer aserciones.
 - `wait_until(timeout, cond)` para efectos asíncronos, y `strip_ansi(bytes)` para comparar salida de terminal (ConPTY añade secuencias VT).
 
-## E2E: flujos obligatorios
+## E2E
+
+Las pruebas e2e están **en Rust** (`e2e/`, crate `gryphus-e2e`, cliente WebDriver `fantoccini`). Arrancan la app real a través de `tauri-driver` y la controlan como un usuario: clics, teclado en xterm y CodeMirror, lectura del DOM y capturas solo de la WebView (en `target/e2e-screens/`).
+
+Cada prueba prepara:
+- un repo git temporal (`TempRepo`);
+- un `GRYPHUS_DATA_DIR` propio, para no tocar los datos reales del usuario, cuya `config.toml` apunta los tres proveedores a `fake-agent`.
+
+Las confirmaciones nativas se aceptan sustituyendo `window.confirm` y quedan registradas para hacer aserciones. El texto de la terminal se lee con `GryphusJs.debugTerminalText()`, porque WebGL no deja texto en el DOM.
+
+```powershell
+# Requisitos (una vez)
+cargo install tauri-driver --locked
+# Windows: msedgedriver de la MISMA versión que WebView2, en target/e2e-tools/msedgedriver-<versión>/
+#          (o su ruta en GRYPHUS_NATIVE_DRIVER). Linux: WebKitWebDriver (paquete webkit2gtk-driver).
+
+# Ejecutar (compila la app con el frontend embebido en target/e2e)
+$env:GRYPHUS_E2E = "1"; cargo test -p gryphus-e2e -- --nocapture
+```
+
+Sin `GRYPHUS_E2E=1` se omiten, así `cargo test --workspace` sigue siendo rápido.
+
+### Flujos obligatorios
 
 Corren contra el binario real con config que apunta los tres proveedores a `fake-agent`:
 
@@ -73,7 +98,11 @@ Corren contra el binario real con config que apunta los tres proveedores a `fake
 8. Intentar eliminar la feature con agente activo → error visible; tras detenerlo, se elimina.
 9. Cerrar y reabrir → features y agentes persistidos (agentes en `Exited`).
 
-> Nota Windows: `tauri-driver` usa `msedgedriver` (WebView2). En macOS no hay driver de WKWebView; los e2e corren en Windows y Linux en CI.
+Los 9 flujos se cubren con 3 pruebas en `e2e/tests/flows.rs`: `open_project_once_per_window` (1-2), `feature_agent_editor_and_diff` (3-8) y `state_persists_across_restarts` (9). **Estado: pasan en Windows 11 (WebView2 158) en ~16 s.**
+
+Las e2e ya detectaron un fallo real: el explorador colapsaba las carpetas abiertas con cada cambio en disco.
+
+> En macOS no hay driver de WKWebView. En CI los e2e están configurados para Windows y Linux (ver `.github/workflows/ci.yml`), aunque esos jobs aún no se han ejecutado.
 
 ## Guardias de arquitectura
 

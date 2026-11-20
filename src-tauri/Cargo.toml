@@ -14,6 +14,11 @@ crate-type = ["rlib"]
 name = "gryphus"
 path = "src/main.rs"
 
+[features]
+# Sirve el frontend embebido (ui/dist) en lugar de devUrl. `cargo tauri build`
+# lo activa; las pruebas e2e también.
+custom-protocol = ["tauri/custom-protocol"]
+
 [build-dependencies]
 tauri-build = { workspace = true }
 

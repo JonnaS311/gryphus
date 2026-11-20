@@ -12,8 +12,17 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let data_dir = app.path().app_data_dir()?;
-            let config_file = app.path().app_config_dir()?.join("config.toml");
+            // GRYPHUS_DATA_DIR aísla datos y config (pruebas e2e, perfiles separados).
+            let (data_dir, config_file) = match std::env::var_os("GRYPHUS_DATA_DIR") {
+                Some(dir) => {
+                    let dir = std::path::PathBuf::from(dir);
+                    (dir.clone(), dir.join("config.toml"))
+                }
+                None => (
+                    app.path().app_data_dir()?,
+                    app.path().app_config_dir()?.join("config.toml"),
+                ),
+            };
             app.manage(state::AppState::new(&data_dir, config_file));
             Ok(())
         })

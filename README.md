@@ -20,6 +20,8 @@ Diseño y documentación: [docs/README.md](docs/README.md).
 | Pruebas | `cargo test --workspace` |
 | Lint | `cargo clippy --workspace --all-targets -- -D warnings` |
 | Formato | `cargo fmt --all` |
+| E2E (app real) | `$env:GRYPHUS_E2E="1"; cargo test -p gryphus-e2e` (requisitos en docs/testing.md#e2e) |
+| Pegamento JS | `cd ui/js; npm install; npm test; npm run build` (solo si cambias ui/js) |
 
 ## Estructura
 

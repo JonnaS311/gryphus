@@ -14,6 +14,6 @@ Estado: ✅ hecho · ⏳ siguiente
 | 5 ✅ | Agentes | Supervisor PTY, ring buffer, coalescencia, config de proveedores | Integración con `fake-agent` (eco, flood, exit code) |
 | 6 ✅ | Casos de uso | `ProjectSession` (features, agentes, archivos, git, vigilancia) | Unitarias con fakes de cada flujo |
 | 7 ✅ | IPC | DTOs en `gryphus-ipc`, comandos, Channels, eventos, `WindowRegistry` | Pruebas de comandos con `tauri::test`; mapeos dominio ⇄ DTO |
-| 8 ⏳ | UI | Bridge (Tauri, xterm, CodeMirror), tres paneles, terminal, editor, diff, barra de estado | `cargo test` de `state/` + `wasm-bindgen-test` de componentes |
-| 9 | E2E | Los 9 flujos de [testing.md](testing.md#e2e-flujos-obligatorios) | E2E en CI (Windows + Linux) |
-| 10 | Rendimiento | Medir contra los presupuestos de [overview.md](architecture/overview.md#presupuestos-de-rendimiento-objetivos-medibles) | Benchmarks con línea base en CI |
+| 8 ✅ | UI | Bridge (Tauri, xterm, CodeMirror), tres paneles, terminal, editor, diff, barra de estado | `cargo test` de `logic.rs` + e2e (sustituye a `wasm-bindgen-test`) |
+| 9 ✅ | E2E | Los 9 flujos de [testing.md](testing.md#flujos-obligatorios) en Rust (`fantoccini`) | Pasan localmente en Windows; jobs de CI configurados (sin ejecutar aún) |
+| 10 ⏳ | Rendimiento | Medir contra los presupuestos de [overview.md](architecture/overview.md#presupuestos-de-rendimiento-objetivos-medibles) | Benchmarks con línea base en CI |

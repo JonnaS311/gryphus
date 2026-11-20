@@ -1,0 +1,15 @@
+[package]
+name = "gryphus-e2e"
+description = "Pruebas e2e: la app real (WebView) controlada por WebDriver via tauri-driver."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dev-dependencies]
+gryphus-testkit = { workspace = true }
+fantoccini = "0.21"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "time", "net"] }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true
