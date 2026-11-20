@@ -11,8 +11,8 @@ Estado: ✅ hecho · ⏳ siguiente
 | 2 ✅ | Testkit | Fakes de todos los puertos, `TempRepo`, `fake-agent`, suites de contrato | Contratos pasan contra los fakes |
 | 3 ✅ | Git | `CliGit` sobre la CLI de git (ADR-005) | Contrato git contra adaptador real; benchmark de status |
 | 4 ✅ | Fs y store | Árbol perezoso, lectura/escritura atómica, watcher, persistencia JSON | Contratos fs/store; pruebas de path traversal |
-| 5 ⏳ | Agentes | Supervisor PTY, ring buffer, coalescencia, config de proveedores | Integración con `fake-agent` (eco, flood, exit code) |
-| 6 | Casos de uso | `ProjectSession`, `FeatureService`, `AgentService`, `GitRefresher` | Unitarias con fakes de cada flujo |
+| 5 ✅ | Agentes | Supervisor PTY, ring buffer, coalescencia, config de proveedores | Integración con `fake-agent` (eco, flood, exit code) |
+| 6 ⏳ | Casos de uso | `ProjectSession`, `FeatureService`, `AgentService`, `GitRefresher` | Unitarias con fakes de cada flujo |
 | 7 | IPC | DTOs en `gryphus-ipc`, comandos, Channels, eventos, `WindowRegistry` | Pruebas de comandos con `tauri::test`; mapeos dominio ⇄ DTO |
 | 8 | UI | Bridge (Tauri, xterm, CodeMirror), tres paneles, terminal, editor, diff, barra de estado | `cargo test` de `state/` + `wasm-bindgen-test` de componentes |
 | 9 | E2E | Los 9 flujos de [testing.md](testing.md#e2e-flujos-obligatorios) | E2E en CI (Windows + Linux) |

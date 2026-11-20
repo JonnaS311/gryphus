@@ -27,23 +27,27 @@ args = []
 - Al iniciar se verifica que cada `command` exista en el `PATH`; los no encontrados aparecen deshabilitados en la UI con el motivo.
 - `gryphus-agents` no tiene lógica específica de proveedor más allá de construir el `SpawnSpec`. Si en el futuro un proveedor necesita algo especial, se añade un `ProviderAdapter` con una sola función `fn spawn_spec(&self, cfg, worktree) -> SpawnSpec`.
 
-## Piezas internas
+## Piezas internas (`PtyRuntime`)
 
 ```
-AgentSupervisor
- ├─ HashMap<AgentId, AgentProcess>
- └─ AgentProcess
-     ├─ pty master (portable-pty / ConPTY en Windows)
-     ├─ child process
-     ├─ reader task (spawn_blocking) ──▶ RingBuffer (scrollback, 2 MiB por defecto)
-     │                                └─▶ subscribers (mpsc) ──▶ Channel de la UI
-     └─ waiter task ──▶ publica AgentStatusChanged(Exited/Failed)
+PtyRuntime ─ HashMap<AgentId, AgentProc>
+AgentProc
+ ├─ master PTY (portable-pty; ConPTY en Windows) + writer + killer
+ ├─ hilo lector ──▶ bytes pendientes ──(Condvar)──▶ hilo flusher
+ │                                                  └─ bajo un único lock:
+ │                                                     ring buffer (VecDeque, 2 MiB)
+ │                                                     + envío Data a los suscriptores
+ └─ hilo waiter: wait() → deja drenar la salida (100 ms inactiva, máx 2 s)
+                 → cierra la PTY → espera al flusher → Exited + on_exit (una sola vez)
 ```
 
-- **RingBuffer:** guarda los últimos N bytes de salida. Permite cambiar de vista y volver sin perder contexto, y sin mantener un xterm vivo por agente en la UI.
-- **Entrada:** `write` escribe directo al master de la PTY.
-- **Resize:** la UI informa columnas/filas al cambiar el tamaño de la vista; se propaga a la PTY.
-- **Apagado:** `kill` envía la señal de terminación; si el proceso no termina en 3 s, se fuerza.
+- **Coalescencia:** el flusher agrupa la salida durante como mucho 16 ms o 64 KiB. Medido: 3000 líneas llegan en menos de 300 mensajes (prueba `output_is_coalesced_into_few_messages`).
+- **Orden garantizado:** el flusher añade al ring buffer y envía a los suscriptores bajo el mismo lock que usa `attach` para mandar el Scrollback. Un suscriptor nuevo nunca ve bytes duplicados ni desordenados.
+- **Handshake de ConPTY:** al arrancar, ConPTY envía `ESC[6n` (pregunta por la posición del cursor) y no produce salida hasta recibir respuesta. Como un agente puede arrancar sin vista conectada, el runtime responde `ESC[1;1R` y quita la pregunta de la salida (si xterm.js respondiera también, el agente recibiría basura en su entrada). Solo se hace en los primeros 1024 bytes y solo en Windows.
+- **Resolución del programa:** se busca en el `PATH` (o en el `PATH` del `env` del proveedor) respetando `PATHEXT`. En Windows, los CLIs instalados con npm (`claude.cmd`, `codex.cmd`, `opencode.cmd`) se lanzan con `cmd.exe /C`. Un programa inexistente es `UNAVAILABLE`.
+- **Entorno:** se hereda el del proceso y se añaden `TERM=xterm-256color`, `COLORTERM=truecolor` y el `env` del proveedor.
+- **Apagado:** `kill` marca el agente y lo termina; la salida se reporta como `Exited { code: None }`. `kill_all()` se usa al cerrar la app.
+- **Cierre robusto:** si el lector no recibe EOF tras cerrar la PTY, se da por terminado a los 2 s para que `on_exit` siempre llegue.
 
 ## Persistencia de agentes
 
@@ -65,4 +69,4 @@ Al arrancar imprime `fake-agent ready` y luego interpreta línea a línea:
 
 El lenguaje está definido una sola vez en `gryphus_testkit::agent_script`. Lo usan el binario y `FakeAgentRuntime`, así que el fake en memoria y el proceso real responden igual (ver [testing.md](../testing.md#fakes-gryphus-testkitfakes)).
 
-> Pendiente para el hito 5: los tests de `gryphus-agents` necesitan la ruta del binario `fake-agent`, y `CARGO_BIN_EXE_*` solo existe dentro de su propio paquete. Plan: un helper en el testkit que lo compile con `cargo build -p fake-agent` y devuelva la ruta.
+Las pruebas de otros paquetes obtienen la ruta del binario con `gryphus_testkit::fake_agent_bin()`, que lo compila una vez por proceso (`cargo build -p fake-agent --message-format=json`).

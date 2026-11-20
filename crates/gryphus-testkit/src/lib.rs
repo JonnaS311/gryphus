@@ -12,12 +12,14 @@
 #![forbid(unsafe_code)]
 
 pub mod agent_script;
+mod bin_path;
 pub mod contracts;
 pub mod fakes;
 pub mod repo;
 pub mod sinks;
 pub mod wait;
 
+pub use bin_path::fake_agent_bin;
 pub use contracts::{AgentHarness, FsHarness, GitHarness, StoreHarness};
 pub use fakes::{FakeAgentRuntime, FakeFs, FakeGit, FakeStore};
 pub use repo::TempRepo;
