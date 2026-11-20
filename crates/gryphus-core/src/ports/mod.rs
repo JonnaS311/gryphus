@@ -9,7 +9,9 @@ pub mod fs;
 pub mod git;
 pub mod store;
 
-pub use agents::{AgentChunk, AgentExit, AgentRuntimePort, ChunkSink, SpawnSpec, TermSize};
+pub use agents::{
+    AgentChunk, AgentExit, AgentRuntimePort, ChunkSink, ExitCallback, SpawnSpec, TermSize,
+};
 pub use fs::{DirEntry, EntryKind, FileContent, FsChangeSink, FsPort};
 pub use git::{
     Branch, Diff, DiffBase, DiffLine, FileDiff, FileState, FileStatus, GitPort, Hunk, NewWorktree,
@@ -37,6 +39,8 @@ pub enum PortErrorKind {
     PermissionDenied,
     /// Herramienta externa ausente (p. ej. `git` o el CLI del agente).
     Unavailable,
+    /// Datos persistidos ilegibles o que violan las invariantes.
+    Corrupted,
     Io,
 }
 
@@ -56,6 +60,7 @@ impl PortError {
             PortErrorKind::InvalidInput => "INVALID_INPUT",
             PortErrorKind::PermissionDenied => "PERMISSION_DENIED",
             PortErrorKind::Unavailable => "UNAVAILABLE",
+            PortErrorKind::Corrupted => "CORRUPTED",
             PortErrorKind::Io => "IO",
         }
     }

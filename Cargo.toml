@@ -9,12 +9,15 @@ publish = false
 
 [workspace.dependencies]
 # Cada hito añade aquí sus dependencias cuando las usa (Cargo avisa de las no usadas).
-# Los crates internos se declaran también aquí cuando otro crate los use, p. ej.:
-# gryphus-core = { path = "crates/gryphus-core" }
+# Crates internos (solo los que otro crate ya usa)
+gryphus-core = { path = "crates/gryphus-core" }
+gryphus-testkit = { path = "crates/gryphus-testkit" }
+
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 proptest = "1"
+tempfile = "3"
 tauri = { version = "2", features = [] }
 tauri-build = { version = "2", features = [] }
 leptos = { version = "0.8", features = ["csr"] }

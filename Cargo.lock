@@ -1094,6 +1094,10 @@ dependencies = [
 [[package]]
 name = "fake-agent"
 version = "0.1.0"
+dependencies = [
+ "gryphus-testkit",
+ "tempfile",
+]
 
 [[package]]
 name = "fastrand"
@@ -1583,6 +1587,11 @@ version = "0.1.0"
 [[package]]
 name = "gryphus-testkit"
 version = "0.1.0"
+dependencies = [
+ "gryphus-core",
+ "serde_json",
+ "tempfile",
+]
 
 [[package]]
 name = "gryphus-ui"

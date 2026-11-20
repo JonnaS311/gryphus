@@ -51,4 +51,18 @@ El **registro** de agentes (id, feature, worktree, proveedor) se persiste en el 
 
 ## Agente falso para pruebas
 
-`tools/fake-agent` es un binario mínimo que imita a un CLI de agente: imprime un banner, hace eco de la entrada, responde a comandos guionizados (`::exit 3`, `::flood 10000`, `::write archivo.txt`) y termina con el código pedido. Se usa en pruebas de integración de `gryphus-agents` y en e2e (configurado como `command` de los tres proveedores), de modo que ninguna prueba depende de tener instalados o autenticados los CLIs reales.
+`tools/fake-agent` es un binario mínimo que imita a un CLI de agente. Se usa en las pruebas de integración de `gryphus-agents` y en e2e (configurado como `command` de los tres proveedores), de modo que ninguna prueba depende de tener instalados o autenticados los CLIs reales.
+
+Al arrancar imprime `fake-agent ready` y luego interpreta línea a línea:
+
+| Línea | Efecto |
+|---|---|
+| `hola` | imprime `echo: hola` |
+| `::exit [N]` | termina con código `N` (0 por defecto) |
+| `::flood N` | imprime `line 0` … `line N-1` |
+| `::write RUTA CONTENIDO` | escribe el archivo relativo al cwd (crea carpetas) e imprime `wrote RUTA` |
+| otro `::…` | imprime `unknown command: …` |
+
+El lenguaje está definido una sola vez en `gryphus_testkit::agent_script`. Lo usan el binario y `FakeAgentRuntime`, así que el fake en memoria y el proceso real responden igual (ver [testing.md](../testing.md#fakes-gryphus-testkitfakes)).
+
+> Pendiente para el hito 5: los tests de `gryphus-agents` necesitan la ruta del binario `fake-agent`, y `CARGO_BIN_EXE_*` solo existe dentro de su propio paquete. Plan: un helper en el testkit que lo compile con `cargo build -p fake-agent` y devuelva la ruta.

@@ -33,7 +33,8 @@ fn allowed() -> BTreeMap<&'static str, &'static [&'static str]> {
                 "gryphus-store",
             ],
         ),
-        ("fake-agent", &[]),
+        // Comparte el lenguaje de comandos con FakeAgentRuntime (agent_script).
+        ("fake-agent", &["gryphus-testkit"]),
         ("arch-guard", &[]),
     ])
 }

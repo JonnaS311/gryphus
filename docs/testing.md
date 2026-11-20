@@ -16,25 +16,48 @@ Todo el desarrollo es **orientado a pruebas (TDD)**: primero la prueba que falla
 
 ## Pruebas de contrato
 
-Cada puerto tiene una suite de comportamiento escrita una sola vez en `gryphus-testkit`:
+Cada puerto tiene una suite de comportamiento escrita una sola vez en `gryphus-testkit/src/contracts/`. La deben pasar **el fake y el adaptador real**. Así el fake que usa `gryphus-app` en sus pruebas no puede divergir del real: si divergen, falla el contrato y no una prueba de alto nivel de forma misteriosa.
+
+Cada suite tiene dos partes:
+
+- Un **harness**: un trait que dice cómo obtener el puerto y cómo preparar el escenario desde fuera de él (escribir un archivo, hacer un commit…).
+- Una **macro** que genera un `#[test]` por caso, para que cada caso aparezca con su nombre en la salida.
 
 ```rust
-// gryphus-testkit/src/contracts/git.rs
-pub fn git_port_contract<P: GitPort>(make: impl Fn(&TempRepo) -> P) {
-    adds_worktree_on_new_branch(&make);
-    lists_worktrees_including_main(&make);
-    status_reports_untracked_and_modified(&make);
-    // ...
-}
+// En las pruebas de un adaptador (p. ej. crates/gryphus-git/tests/contract.rs)
+struct Harness { repo: TempRepo, git: GixGit }
+impl gryphus_testkit::GitHarness for Harness { /* port(), root(), write_file(), commit_all()… */ }
+gryphus_testkit::git_contract!(Harness::new);
 ```
 
-Se ejecuta contra `FakeGit` (en memoria) y contra `GixGit`. Así garantizamos que el fake usado en las pruebas de `gryphus-app` se comporta como el real; si divergen, falla el contrato y no las pruebas de alto nivel de forma misteriosa.
+| Suite | Macro | Casos | Semántica que fija |
+|---|---|---|---|
+| `GitPort` | `git_contract!` | 16 | worktrees y branches, errores `AlreadyExists`/`Conflict`/`NotFound`, status con untracked/modified/deleted, diff contra HEAD y contra merge-base, **diff incluye archivos sin seguimiento**, `DiffLine` sin salto de línea |
+| `FsPort` | `fs_contract!` | 11 | orden (directorios primero, sin distinguir mayúsculas), `.git` oculto, `.gitignore`, `Text`/`Binary`/`TooLarge`, escritura que crea padres, watcher con cancelación |
+| `StorePort` | `store_contract!` | 6 | ida y vuelta, sobrescritura, config por defecto, `Corrupted` si el JSON es ilegible o viola invariantes |
+| `AgentRuntimePort` | `agents_contract!` | 10 | Scrollback antes que Data, eco, código de salida, `on_exit` exactamente una vez, flood completo y en orden, relanzar, `Unavailable`, `NotFound` |
 
-## Fixtures
+Estado actual: los **fakes pasan los 43 casos**. Cada adaptador real los ejecutará en su hito (3: git, 4: fs y store, 5: agentes).
 
-- `TempRepo::new()` → repo git real en un directorio temporal con un commit inicial; helpers `commit_file`, `branch`, `add_worktree`.
-- `fake-agent` → CLI de agente determinista (ver [agents.md](architecture/agents.md#agente-falso-para-pruebas)).
-- `FakeClock`, `FakeEventSink` (registra eventos para aserciones).
+La eficacia de los contratos está comprobada: al quitar del `FakeGit` el reporte de archivos borrados, falla exactamente `status_reports_untracked_modified_and_deleted` con un diff claro.
+
+## Fakes (`gryphus-testkit::fakes`)
+
+| Fake | Modelo | Ganchos para pruebas |
+|---|---|---|
+| `FakeGit` | commits, branches y worktrees en memoria; diff por LCS | `write_file`, `delete_file`, `commit_all`, `create_branch` |
+| `FakeFs` | árbol en memoria; `.gitignore` simplificado (nombres exactos y `dir/`) | `write_raw` (cambio externo que avisa a los watchers), `create_dir`, `with_limit` |
+| `FakeStore` | guarda **JSON** en memoria (ejercita la serialización real) | `write_raw_project`, `with_config`, `save_count` |
+| `FakeAgentRuntime` | interpreta el lenguaje de `fake-agent` de forma síncrona | `emit`, `finish`, `spawned`, `written`, `size`, `allow_program` |
+
+Todos tienen `fail_next(err)` para simular el fallo de la próxima llamada.
+
+## Fixtures y utilidades
+
+- `TempRepo::new()`: repo git **real** en un directorio temporal, con una configuración aislada (`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM`). Arranca en `main` con un commit que contiene `README.md` = `"hola\n"`. Tiene `write_file`, `delete_file`, `commit_all`, `create_branch`, `add_worktree` y `git(cwd, args)`. Se borra al soltarse.
+- `fake-agent`: CLI de agente determinista (ver [agents.md](architecture/agents.md#agente-falso-para-pruebas)). Su lenguaje vive en `gryphus_testkit::agent_script` y lo comparten el binario y `FakeAgentRuntime`.
+- `RecordingEventSink`, `CollectingChunkSink`, `CollectingFsSink`: acumulan lo recibido para hacer aserciones.
+- `wait_until(timeout, cond)` para efectos asíncronos, y `strip_ansi(bytes)` para comparar salida de terminal (ConPTY añade secuencias VT).
 
 ## E2E: flujos obligatorios
 
