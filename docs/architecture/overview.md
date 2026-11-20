@@ -106,19 +106,29 @@ Pruebas: 25 casos con fakes de todos los puertos (`crates/gryphus-app/tests/sess
 
 ## Modelo de concurrencia
 
-- Un único runtime `tokio` multihilo (el de Tauri).
-- Cada `ProjectSession` es dueña de su estado (`features`, `agents`) detrás de un `RwLock` corto; nunca se mantiene un lock durante IO.
-- Cada agente tiene una tarea lectora dedicada (bloqueante, `spawn_blocking`) que llena un ring buffer y un `mpsc` hacia el Channel.
-- Las operaciones git pesadas (status, diff) corren en `spawn_blocking` y se **eliminan duplicados**: si llega un nuevo `fs:changed` mientras se calcula un status, se recalcula una sola vez al terminar.
+- **Comandos IPC:** el trabajo bloqueante (git, disco, procesos) corre en `spawn_blocking` del runtime de Tauri, nunca en el hilo de la UI. La entrada de teclado (`agent_input`) es síncrona porque escribir en la PTY es inmediato.
+- **Sesión:** `ProjectSession` guarda el `Project` tras un `Mutex` que nunca se mantiene durante una llamada a un puerto.
+- **Agentes:** tres hilos por agente (lector, flusher y waiter; ver [agents.md](agents.md#piezas-internas-ptyruntime)), sin runtime async.
+- **Watchers:** un hilo por worktree vigilado agrupa los eventos de `notify` (150 ms).
 
-## Presupuestos de rendimiento (objetivos medibles)
+## Presupuestos de rendimiento
 
-| Métrica | Objetivo |
-|---|---|
-| Arranque en frío hasta ventana interactiva | < 400 ms |
-| Memoria en reposo (1 proyecto, 0 agentes) | < 120 MB |
-| Latencia tecla → eco en terminal del agente | < 16 ms |
-| `git status` en repo de 10k archivos | < 150 ms |
-| Abrir directorio en el explorador | < 30 ms (carga perezosa, un nivel) |
+Medidos con la app en **release** en Windows 11 (WebView2 158). Los mide la prueba `e2e/tests/perf.rs`, que guarda `target/perf.json`, junto con `cargo bench -p gryphus-git` y `crates/gryphus-agents/tests/latency.rs`.
 
-Los presupuestos se verifican con benchmarks (`criterion`) en los crates de infraestructura.
+| Métrica | Objetivo | Medido | Estado |
+|---|---|---|---|
+| Abrir directorio en el explorador (1000 archivos, vía IPC) | < 30 ms | **3 ms** (raíz: 1,6 ms) | ✅ |
+| Latencia tecla → eco (UI → IPC → PTY → agente → xterm) | < 16 ms | **18 ms** mediana, p95 18 ms | ⚠️ límite de ConPTY |
+| `git status` en repo de 10 000 archivos (adaptador) | < 150 ms | **151 ms** | ⚠️ coste de `lstat` en NTFS |
+| Arranque en frío hasta UI montada | < 400 ms | **455–477 ms** | ❌ |
+| Memoria en reposo, proceso Gryphus (Rust) | — | **6,9 MB** privados | ✅ |
+| Memoria en reposo, total con WebView2 | < 120 MB | 258 MB privados / 412 MB working set | ❌ presupuesto irreal para WebView2 |
+
+**Lectura de los resultados:**
+- **Eco:** ConPTY por sí solo tarda ~21 ms en el backend, medido sin Gryphus (coalescencia de 1 ms). Gryphus no añade latencia: el throttle con flanco de subida envía el primer lote de inmediato. Así se corrigió un problema real (de 52 ms a 21 ms), ver [agents.md](agents.md#piezas-internas-ptyruntime). En Linux una PTY no tiene ese coste.
+- **`git status`:** ~70 % es leer los metadatos de los archivos (ADR-005). La mejora posible es `core.fsmonitor`, como opción de configuración.
+- **Memoria:** WebView2 es Chromium multiproceso (navegador, GPU, renderer, utilidades). Su consumo base supera los 120 MB por sí solo, así que ese presupuesto no era alcanzable con Tauri en Windows. Lo que controla Gryphus, el proceso Rust, ocupa 7 MB. Propuesta: medir por separado "Gryphus < 50 MB" y "total < 300 MB".
+- **Arranque (pendiente de optimizar):** incluye crear el entorno WebView2, cargar el WASM de la UI (474 KB tras `wasm-opt`) y el bundle JS (1,1 MB). Candidatos, de mayor a menor impacto esperado:
+  1. Cargar CodeMirror y sus lenguajes bajo demanda: no hacen falta para pintar la primera pantalla.
+  2. Crear la ventana oculta y mostrarla al montar la UI, para que se vea antes y sin parpadeo.
+  3. Medir el desglose (WebView2 / JS / WASM) antes de seguir.

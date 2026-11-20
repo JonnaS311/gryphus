@@ -15,7 +15,7 @@ Todo el desarrollo es **orientado a pruebas (TDD)**: primero la prueba que falla
 | Pegamento JS | `ui/js/test` | Decodificador del formato binario de salida | `node --test` | ms |
 | E2E | `e2e/` | App real (WebView) completa, flujos de usuario | Rust + `fantoccini` + `tauri-driver` | s |
 
-Estado actual: **233 pruebas** en `cargo test --workspace`, todas en verde. Incluyen las 3 e2e, que sin `GRYPHUS_E2E=1` se cuentan pero no hacen nada. Aparte hay 4 pruebas de JS. Las pruebas de componentes con `wasm-bindgen-test` previstas al inicio se sustituyeron por e2e contra la app real (ver [ui.md](architecture/ui.md#pruebas)).
+Estado actual: **235 pruebas** en `cargo test --workspace`, todas en verde. Incluyen las 3 e2e, que sin `GRYPHUS_E2E=1` se cuentan pero no hacen nada. Aparte hay 4 pruebas de JS. Las pruebas de componentes con `wasm-bindgen-test` previstas al inicio se sustituyeron por e2e contra la app real (ver [ui.md](architecture/ui.md#pruebas)).
 
 ## Pruebas de contrato
 

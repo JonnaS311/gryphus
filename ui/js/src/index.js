@@ -37,6 +37,27 @@ export function debugTerminalText() {
   return lines.join('\n');
 }
 
+/**
+ * Gancho de pruebas de rendimiento: ms desde enviar `token\r` al agente hasta que
+ * xterm termina de procesar `echo: token` (IPC → PTY → agente → Channel → xterm).
+ */
+export function debugEchoLatency(agent, token) {
+  return new Promise((resolve, reject) => {
+    if (!lastTerminal) {
+      reject(new Error('sin terminal'));
+      return;
+    }
+    const start = performance.now();
+    const sub = lastTerminal.onWriteParsed(() => {
+      if (debugTerminalText().includes(`echo: ${token}`)) {
+        sub.dispose();
+        resolve(performance.now() - start);
+      }
+    });
+    window.__TAURI__.core.invoke('agent_input', { req: { agent, data: `${token}\r` } });
+  });
+}
+
 export function createTerminal(el, onData, onResize) {
   const term = new Terminal({
     fontFamily: '"Cascadia Mono", Consolas, "DejaVu Sans Mono", monospace',

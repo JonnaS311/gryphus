@@ -41,7 +41,7 @@ AgentProc
                  → cierra la PTY → espera al flusher → Exited + on_exit (una sola vez)
 ```
 
-- **Coalescencia:** el flusher agrupa la salida durante como mucho 16 ms o 64 KiB. Medido: 3000 líneas llegan en menos de 300 mensajes (prueba `output_is_coalesced_into_few_messages`).
+- **Coalescencia con flanco de subida:** si no se envió nada en los últimos 16 ms, el lote sale **de inmediato** (eco de teclas sin espera). Si la salida no para, se agrupa y sale como mucho una vez cada 16 ms. 3000 líneas llegan en menos de 300 mensajes (`output_is_coalesced_into_few_messages`). La espera usa `thread::sleep`, de alta resolución en Windows. `Condvar::wait_timeout` redondea a ~15,6 ms, y con él el eco medía 52 ms en lugar de 21 ms (`tests/latency.rs`).
 - **Orden garantizado:** el flusher añade al ring buffer y envía a los suscriptores bajo el mismo lock que usa `attach` para mandar el Scrollback. Un suscriptor nuevo nunca ve bytes duplicados ni desordenados.
 - **Handshake de ConPTY:** al arrancar, ConPTY envía `ESC[6n` (pregunta por la posición del cursor) y no produce salida hasta recibir respuesta. Como un agente puede arrancar sin vista conectada, el runtime responde `ESC[1;1R` y quita la pregunta de la salida (si xterm.js respondiera también, el agente recibiría basura en su entrada). Solo se hace en los primeros 1024 bytes y solo en Windows.
 - **Resolución del programa:** se busca en el `PATH` (o en el `PATH` del `env` del proveedor) respetando `PATHEXT`. En Windows, los CLIs instalados con npm (`claude.cmd`, `codex.cmd`, `opencode.cmd`) se lanzan con `cmd.exe /C`. Un programa inexistente es `UNAVAILABLE`.

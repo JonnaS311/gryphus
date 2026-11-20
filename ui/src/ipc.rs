@@ -118,3 +118,8 @@ pub async fn git_diff(worktree: u64, base: Option<String>) -> IpcResult<DiffDto>
 pub async fn git_overview() -> IpcResult<GitOverviewDto> {
     call(cmd::GIT_OVERVIEW).await
 }
+
+/// Marca el arranque en frío (ms desde el inicio del proceso).
+pub async fn ui_ready() -> IpcResult<u64> {
+    call(cmd::UI_READY).await
+}

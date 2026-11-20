@@ -44,31 +44,42 @@ fn run(cmd: &mut Command) {
 }
 
 /// Compila la UI y la app con el frontend embebido (una vez por proceso).
-pub fn app_binary() -> PathBuf {
-    static BIN: OnceLock<PathBuf> = OnceLock::new();
-    BIN.get_or_init(|| {
+/// `release` se usa para medir rendimiento.
+pub fn app_binary(release: bool) -> PathBuf {
+    static DEBUG: OnceLock<PathBuf> = OnceLock::new();
+    static RELEASE: OnceLock<PathBuf> = OnceLock::new();
+    let cell = if release { &RELEASE } else { &DEBUG };
+    cell.get_or_init(|| {
         let ws = workspace();
-        run(Command::new("trunk")
-            .args(["--config", "ui/Trunk.toml", "build"])
-            .current_dir(&ws));
+        let target_dir = if release {
+            "target/e2e-release"
+        } else {
+            "target/e2e"
+        };
+        let mut trunk = vec!["--config", "ui/Trunk.toml", "build"];
+        let mut cargo_args = vec![
+            "build",
+            "-p",
+            "gryphus-desktop",
+            "--features",
+            "custom-protocol",
+            "--target-dir",
+            target_dir,
+        ];
+        if release {
+            trunk.push("--release");
+            cargo_args.push("--release");
+        }
+        run(Command::new("trunk").args(&trunk).current_dir(&ws));
         let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-        run(Command::new(cargo)
-            .args([
-                "build",
-                "-p",
-                "gryphus-desktop",
-                "--features",
-                "custom-protocol",
-                "--target-dir",
-                "target/e2e",
-            ])
-            .current_dir(&ws));
+        run(Command::new(cargo).args(&cargo_args).current_dir(&ws));
         let exe = if cfg!(windows) {
             "gryphus.exe"
         } else {
             "gryphus"
         };
-        ws.join("target").join("e2e").join("debug").join(exe)
+        let profile = if release { "release" } else { "debug" };
+        ws.join(target_dir).join(profile).join(exe)
     })
     .clone()
 }
@@ -143,7 +154,11 @@ where
 
 impl App {
     pub async fn start(fixture: &Fixture) -> Self {
-        let exe = app_binary();
+        Self::start_with(fixture, false).await
+    }
+
+    pub async fn start_with(fixture: &Fixture, release: bool) -> Self {
+        let exe = app_binary(release);
         let port = free_port();
         let native_port = free_port();
         let mut cmd = tokio::process::Command::new("tauri-driver");
@@ -154,9 +169,14 @@ impl App {
             &native_port.to_string(),
         ])
         .env("GRYPHUS_DATA_DIR", &fixture.data)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
         .kill_on_drop(true);
+        // Log de tauri-driver/msedgedriver para diagnosticar fallos de sesión.
+        let logs = workspace().join("target").join("e2e-logs");
+        std::fs::create_dir_all(&logs).unwrap();
+        let log_path = logs.join(format!("tauri-driver-{port}.log"));
+        let log = std::fs::File::create(&log_path).unwrap();
+        cmd.stdout(Stdio::from(log.try_clone().unwrap()))
+            .stderr(Stdio::from(log));
         if let Some(native) = native_driver() {
             cmd.arg("--native-driver").arg(native);
         }
@@ -172,11 +192,21 @@ impl App {
         let mut caps = serde_json::Map::new();
         caps.insert("browserName".into(), json!("wry"));
         caps.insert("tauri:options".into(), json!({ "application": exe }));
-        let client = ClientBuilder::native()
-            .capabilities(caps)
-            .connect(&format!("http://{addr}"))
-            .await
-            .expect("sesión WebDriver con la app");
+        // Sin límite, un fallo al lanzar la app deja la prueba colgada indefinidamente.
+        let client = tokio::time::timeout(
+            Duration::from_secs(60),
+            ClientBuilder::native()
+                .capabilities(caps)
+                .connect(&format!("http://{addr}")),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "la sesión WebDriver no se abrió en 60 s; log: {}",
+                log_path.display()
+            )
+        })
+        .expect("sesión WebDriver con la app");
         Self { client, driver }
     }
 

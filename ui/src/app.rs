@@ -15,6 +15,9 @@ use crate::views::{MainView, Welcome};
 pub fn App() -> impl IntoView {
     let store = Store::new();
     provide_context(store);
+    spawn_local(async {
+        let _ = ipc::ui_ready().await;
+    });
     store.refresh_project();
     register_events(store);
 

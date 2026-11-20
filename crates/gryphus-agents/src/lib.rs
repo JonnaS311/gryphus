@@ -2,7 +2,7 @@
 //!
 //! Por agente hay tres hilos:
 //! - **lector**: lee la PTY y acumula bytes pendientes;
-//! - **flusher**: agrupa los pendientes (≤ [`COALESCE`] o [`MAX_BATCH`]), los añade al
+//! - **flusher**: envía de inmediato tras un reposo y, si la salida no para, como mucho una vez por [`COALESCE`]; añade al
 //!   ring buffer y los envía a los suscriptores, todo bajo el mismo lock, así que
 //!   un `attach` nunca ve Data duplicada ni desordenada respecto al Scrollback;
 //! - **waiter**: espera al proceso, deja drenar la salida, cierra la PTY y notifica
@@ -31,8 +31,6 @@ pub use resolve::resolve_program;
 
 /// Ventana máxima de agrupación de salida (~1 frame).
 pub const COALESCE: Duration = Duration::from_millis(16);
-/// Tamaño a partir del cual un lote se envía sin esperar.
-pub const MAX_BATCH: usize = 64 * 1024;
 /// Scrollback por agente.
 pub const DEFAULT_SCROLLBACK: usize = 2 * 1024 * 1024;
 /// Tras salir el proceso, se espera a que la salida quede inactiva este tiempo…
@@ -68,7 +66,6 @@ struct Output {
 
 struct Pending {
     bytes: Vec<u8>,
-    first_at: Option<Instant>,
     reader_done: bool,
 }
 
@@ -184,7 +181,6 @@ fn reader_loop(proc: Arc<AgentProc>, mut reader: Box<dyn Read + Send>) {
                 }
                 let mut p = lock(&proc.pending);
                 p.bytes.extend_from_slice(chunk);
-                p.first_at.get_or_insert_with(Instant::now);
                 proc.pending_cv.notify_one();
             }
         }
@@ -197,7 +193,11 @@ fn mark_reader_done(proc: &AgentProc) {
     proc.pending_cv.notify_one();
 }
 
+/// Throttle con flanco de subida: si no se envió nada en los últimos
+/// [`COALESCE`], el lote sale **de inmediato** (eco de teclas sin espera); si la
+/// salida no para, se agrupa y sale como mucho una vez por ventana.
 fn flusher_loop(proc: Arc<AgentProc>, limit: usize) {
+    let mut last_flush: Option<Instant> = None;
     loop {
         let batch = {
             let mut p = lock(&proc.pending);
@@ -207,22 +207,21 @@ fn flusher_loop(proc: Arc<AgentProc>, limit: usize) {
             if p.bytes.is_empty() && p.reader_done {
                 return;
             }
-            // Espera a completar la ventana salvo que el lote ya sea grande o el lector terminó.
-            while !p.reader_done && p.bytes.len() < MAX_BATCH {
-                let elapsed = p.first_at.map_or(COALESCE, |t| t.elapsed());
-                let Some(left) = COALESCE.checked_sub(elapsed) else {
-                    break;
-                };
-                p = proc
-                    .pending_cv
-                    .wait_timeout(p, left)
-                    .unwrap_or_else(|e| e.into_inner())
-                    .0;
+            let wait = last_flush
+                .map(|t| t + COALESCE)
+                .and_then(|ready_at| ready_at.checked_duration_since(Instant::now()));
+            if let Some(left) = wait.filter(|_| !p.reader_done) {
+                // `thread::sleep` usa temporizadores de alta resolución en Windows;
+                // `Condvar::wait_timeout` redondearía a ~15,6 ms (medido: +30 ms de eco).
+                // Mientras dormimos, el lector sigue acumulando: eso es la coalescencia.
+                drop(p);
+                thread::sleep(left);
+                p = lock(&proc.pending);
             }
-            p.first_at = None;
             std::mem::take(&mut p.bytes)
         };
         proc.flush(batch, limit);
+        last_flush = Some(Instant::now());
     }
 }
 
@@ -283,7 +282,6 @@ impl AgentRuntimePort for PtyRuntime {
             }),
             pending: Mutex::new(Pending {
                 bytes: Vec::new(),
-                first_at: None,
                 reader_done: false,
             }),
             pending_cv: Condvar::new(),

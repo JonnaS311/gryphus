@@ -33,6 +33,8 @@ pub mod cmd {
     pub const GIT_STATUS: &str = "git_status";
     pub const GIT_DIFF: &str = "git_diff";
     pub const GIT_OVERVIEW: &str = "git_overview";
+    /// La UI lo llama al montarse; devuelve ms desde el arranque del proceso.
+    pub const UI_READY: &str = "ui_ready";
 }
 
 /// Nombres de eventos (Rust → ventana del proyecto). Son notificaciones: la UI
@@ -391,6 +393,7 @@ mod tests {
             cmd::GIT_STATUS,
             cmd::GIT_DIFF,
             cmd::GIT_OVERVIEW,
+            cmd::UI_READY,
         ];
         let unique: std::collections::HashSet<_> = names.iter().collect();
         assert_eq!(unique.len(), names.len());

@@ -61,6 +61,21 @@ fn project_dto(s: &ProjectSession) -> ProjectDto {
     })
 }
 
+// ── Métricas ─────────────────────────────────────────────────────────────────
+
+pub static PROCESS_START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+static UI_READY_MS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+
+/// Arranque en frío: ms desde el inicio del proceso hasta que la primera UI se montó.
+#[tauri::command]
+pub fn ui_ready() -> u64 {
+    *UI_READY_MS.get_or_init(|| {
+        PROCESS_START
+            .get()
+            .map_or(0, |t| t.elapsed().as_millis() as u64)
+    })
+}
+
 // ── Proyecto y ventanas ──────────────────────────────────────────────────────
 
 #[tauri::command]

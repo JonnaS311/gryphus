@@ -9,6 +9,7 @@ pub mod state;
 use tauri::Manager;
 
 pub fn run() {
+    let _ = commands::PROCESS_START.set(std::time::Instant::now());
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
@@ -53,6 +54,7 @@ pub fn run() {
             commands::git_status,
             commands::git_diff,
             commands::git_overview,
+            commands::ui_ready,
         ])
         .run(tauri::generate_context!())
         .expect("error al iniciar Gryphus");
