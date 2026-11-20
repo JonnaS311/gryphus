@@ -1,11 +1,19 @@
 [package]
 name = "gryphus-store"
-description = "Adaptador StorePort: estado por proyecto (JSON atomico) y configuracion global."
+description = "Adaptador StorePort: estado por proyecto (JSON atómico) y configuración global (TOML)."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+gryphus-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+
+[dev-dependencies]
+gryphus-testkit = { workspace = true }
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

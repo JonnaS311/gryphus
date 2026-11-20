@@ -1,11 +1,18 @@
 [package]
 name = "gryphus-fs"
-description = "Adaptador FsPort: arbol perezoso, lectura/escritura atomica y watcher."
+description = "Adaptador FsPort: árbol perezoso, lectura/escritura atómica y watcher con debounce."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+gryphus-core = { workspace = true }
+notify = { workspace = true }
+ignore = { workspace = true }
+
+[dev-dependencies]
+gryphus-testkit = { workspace = true }
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

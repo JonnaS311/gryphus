@@ -146,7 +146,7 @@ Son **notificaciones, no datos** (ADR-008): la UI vuelve a pedir lo que necesita
 
 `Config::default()` trae los tres proveedores con su comando por defecto (`opencode`, `claude`, `codex`). `config.provider(id)` falla con `PROVIDER_NOT_CONFIGURED` si falta o el comando está vacío. `config.worktree_path(repo_root, feature)` aplica ADR-012: `<padre>/<repo>.worktrees/<feature>`, o `<worktrees_dir>/<repo>/<feature>` si está configurado.
 
-> Pendiente para el hito 4 (`gryphus-store`): si el usuario declara solo algunos proveedores en `config.toml`, hay que combinar con los valores por defecto en lugar de reemplazar el mapa completo.
+`gryphus-store` combina `config.toml` con los valores por defecto: un proveedor que el usuario no declara conserva su comando por defecto. Un proveedor desconocido o un campo desconocido es un error `INVALID_INPUT` con el motivo.
 
 ## Pruebas
 

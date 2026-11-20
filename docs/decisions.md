@@ -63,6 +63,7 @@ Formato corto: decisión, motivo, alternativa descartada. Una decisión nueva o 
 - **Decisión:** `<app-data>/projects/<projectId>.json`, escritura atómica (archivo temporal + rename). Nada se escribe dentro del repo del usuario.
 - **Motivo:** el estado es pequeño (features, worktrees, registro de agentes); JSON es inspeccionable y suficiente.
 - **Alternativa:** SQLite. Se reconsidera si se necesita historial de sesiones o búsqueda.
+- **Implementación (hito 4):** `JsonStore` en `gryphus-store`. Escribe en un temporal del mismo directorio y lo renombra; al cargar verifica las invariantes y devuelve `CORRUPTED` si fallan. `LocalFs` (`gryphus-fs`) usa la misma técnica para guardar archivos del editor, y además rechaza rutas que, tras resolver symlinks o junctions, salen del worktree.
 
 ### ADR-012 — Worktrees fuera del repositorio
 - **Decisión:** por defecto en `<padre-del-repo>/<nombre-repo>.worktrees/<feature>` (configurable).
