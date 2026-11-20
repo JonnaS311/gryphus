@@ -1,0 +1,11 @@
+[package]
+name = "gryphus-app"
+description = "Casos de uso de Gryphus. Orquesta los puertos de gryphus-core; nunca conoce adaptadores concretos."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

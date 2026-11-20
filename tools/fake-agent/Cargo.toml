@@ -1,0 +1,9 @@
+[package]
+name = "fake-agent"
+description = "CLI de agente simulado y determinista para pruebas de integracion y e2e."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

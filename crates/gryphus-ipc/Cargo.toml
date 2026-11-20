@@ -1,0 +1,11 @@
+[package]
+name = "gryphus-ipc"
+description = "Contrato IPC compartido entre src-tauri y la UI (WASM): DTOs, nombres de comandos/eventos y errores. Solo depende de serde."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

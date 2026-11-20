@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dependencias de sistema (Tauri en Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - name: Toolchain (rust-toolchain.toml)
+        run: rustup show
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: trunk
+
+      - name: Formato
+        run: cargo fmt --all --check
+
+      # src-tauri necesita ui/dist para compilar (frontendDist)
+      - name: Build de la UI (WASM)
+        run: trunk --config ui/Trunk.toml build
+
+      - name: Clippy (nativo)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Clippy (UI en wasm32)
+        run: cargo clippy -p gryphus-ui --target wasm32-unknown-unknown -- -D warnings
+
+      - name: Pruebas
+        run: cargo test --workspace

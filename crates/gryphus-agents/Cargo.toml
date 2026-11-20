@@ -1,0 +1,11 @@
+[package]
+name = "gryphus-agents"
+description = "Adaptador AgentRuntimePort: PTY, supervisor de procesos y ring buffer de salida."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

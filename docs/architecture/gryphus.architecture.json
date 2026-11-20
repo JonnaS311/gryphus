@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Gryphus ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Arquitectura del sistema",
+    "output": "gryphus-architecture.html",
+    "quality_profile": "showcase",
+    "views": [
+      { "id": "agent-path", "label": "Ruta de un agente", "focus": ["ui-center", "ipc", "app", "agents", "clis"], "note": "Lanzar un agente y transmitir su salida PTY hasta la vista central." },
+      { "id": "git-path", "label": "Git y worktrees", "focus": ["ui-left", "ipc", "app", "git", "repo"], "note": "Features, branches, worktrees y diffs leidos del repositorio." },
+      { "id": "files-path", "label": "Archivos", "focus": ["ui-right", "ipc", "app", "fs", "repo"], "note": "Arbol de archivos perezoso y cambios en disco via watcher." },
+      { "id": "domain", "label": "Nucleo y estado", "focus": ["app", "core", "store"], "note": "Dominio puro con puertos (traits); el estado del proyecto se persiste aparte." }
+    ]
+  },
+  "components": [
+    { "id": "ui-left", "type": "frontend", "label": "Panel de agentes", "sublabel": "features / agentes / worktrees", "pos": [40, 110], "size": [170, 64] },
+    { "id": "ui-center", "type": "frontend", "label": "Vista central", "sublabel": "terminal / editor / diff", "pos": [40, 250], "size": [170, 64], "tag": "Leptos / WASM" },
+    { "id": "ui-right", "type": "frontend", "label": "Explorador", "sublabel": "carpetas y archivos", "pos": [40, 390], "size": [170, 64] },
+    { "id": "ipc", "type": "security", "label": "src-tauri", "sublabel": "commands + Channels", "pos": [340, 250], "size": [160, 64], "tag": "1 ventana = 1 proyecto" },
+    { "id": "core", "type": "backend", "label": "gryphus-core", "sublabel": "dominio + puertos", "pos": [600, 90], "size": [160, 64], "tag": "sin IO" },
+    { "id": "app", "type": "backend", "label": "gryphus-app", "sublabel": "casos de uso + eventos", "pos": [600, 250], "size": [160, 64] },
+    { "id": "store", "type": "database", "label": "gryphus-store", "sublabel": "estado por proyecto", "pos": [600, 430], "size": [160, 64] },
+    { "id": "agents", "type": "backend", "label": "gryphus-agents", "sublabel": "PTY + supervisor", "pos": [860, 110], "size": [160, 64] },
+    { "id": "git", "type": "backend", "label": "gryphus-git", "sublabel": "gix + git CLI", "pos": [860, 250], "size": [160, 64] },
+    { "id": "fs", "type": "backend", "label": "gryphus-fs", "sublabel": "arbol + notify", "pos": [860, 390], "size": [160, 64] },
+    { "id": "clis", "type": "external", "label": "CLIs de agente", "sublabel": "opencode / claude / codex", "pos": [1120, 110], "size": [170, 64] },
+    { "id": "repo", "type": "external", "label": "Repositorio", "sublabel": "worktrees en disco", "pos": [1120, 320], "size": [170, 64] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Webview", "wraps": ["ui-left", "ui-center", "ui-right"] },
+    { "kind": "region", "label": "Proceso Rust", "wraps": ["ipc", "core", "app", "store", "agents", "git", "fs"] }
+  ],
+  "connections": [
+    { "id": "left-ipc", "from": "ui-left", "to": "ipc" },
+    { "id": "center-ipc", "from": "ui-center", "to": "ipc", "label": "invoke", "variant": "emphasis", "labelDx": -35 },
+    { "id": "right-ipc", "from": "ui-right", "to": "ipc" },
+    { "id": "ipc-app", "from": "ipc", "to": "app", "label": "use case", "variant": "emphasis" },
+    { "id": "app-core", "from": "app", "to": "core", "label": "dominio", "variant": "dashed" },
+    { "id": "app-store", "from": "app", "to": "store", "label": "persiste", "labelDy": 24 },
+    { "id": "app-agents", "from": "app", "to": "agents", "label": "spawn", "variant": "emphasis" },
+    { "id": "app-git", "from": "app", "to": "git" },
+    { "id": "app-fs", "from": "app", "to": "fs" },
+    { "id": "agents-clis", "from": "agents", "to": "clis", "label": "PTY", "variant": "emphasis" },
+    { "id": "git-repo", "from": "git", "to": "repo", "label": "lee / worktree" },
+    { "id": "fs-repo", "from": "fs", "to": "repo", "label": "watch" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Capas", "items": ["UI: Leptos (WASM) + xterm.js + CodeMirror 6", "src-tauri: adaptador IPC delgado", "gryphus-app: casos de uso", "gryphus-core: dominio puro y traits"] },
+    { "dot": "emerald", "title": "Regla de dependencias", "items": ["Todo depende de core; core de nada", "Adaptadores implementan puertos de core", "UI y src-tauri comparten tipos en gryphus-ipc"] },
+    { "dot": "amber", "title": "Eficiencia", "items": ["Salida PTY por Channel, lotes de 16 ms", "Arbol de archivos perezoso", "git status con debounce desde notify"] },
+    { "dot": "violet", "title": "Pruebas", "items": ["Unitarias con fakes de cada puerto", "Integracion sobre repos git temporales", "E2E: tauri-driver + agente falso"] }
+  ]
+}

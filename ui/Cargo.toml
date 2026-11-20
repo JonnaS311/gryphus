@@ -1,0 +1,13 @@
+[package]
+name = "gryphus-ui"
+description = "Frontend de Gryphus en Leptos (CSR, WASM). Solo depende de gryphus-ipc."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+leptos = { workspace = true }
+console_error_panic_hook = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,12 @@
+[package]
+name = "arch-guard"
+description = "Pruebas que hacen cumplir la arquitectura: regla de dependencias entre crates y aislamiento del bridge JS de la UI."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[lints]
+workspace = true
