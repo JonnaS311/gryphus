@@ -81,6 +81,29 @@ Dentro de Rust, los adaptadores **no** llaman a la UI. Publican `DomainEvent`s e
 5. Se publica `AgentStatusChanged(Running)`; la UI lo recibe y muestra el agente.
 6. La vista central abre un Channel con `attach_agent`; recibe primero el scrollback guardado y después la salida en vivo, en lotes.
 
+## Casos de uso (`gryphus-app`)
+
+`ProjectSession` es el estado vivo de **un** proyecto (una ventana). Recibe los puertos en un `Ports { git, agents, fs, store, events }` y expone:
+
+| Grupo | Operaciones |
+|---|---|
+| Ciclo de vida | `open(path, ports)` (carga o crea el proyecto, `reset_after_restart`, sincroniza worktrees, empieza a vigilar), `close()` (mata agentes activos y guarda) |
+| Features | `create_feature(name, New{base} \| Existing(wt))`, `delete_feature(f, remove_worktrees, force)`, `attach_worktree`, `detach_worktree` |
+| Agentes | `spawn_agent`, `stop_agent`, `restart_agent`, `remove_agent`, `agent_input`, `agent_resize`, `attach_agent` |
+| Archivos | `list_dir`, `read_file`, `write_file` (rutas relativas al worktree, validadas como `RelPath`) |
+| Git | `git_status`, `git_diff`, `git_overview`, `refresh_worktrees` |
+
+Reglas de implementación:
+- **Nunca** se mantiene el lock del proyecto durante una llamada a un puerto.
+- Toda mutación pasa por `mutate()`: aplica la regla de dominio, guarda y solo entonces publica el evento.
+- **Deshacer en fallos parciales:** si `create_feature` crea el worktree en git pero no puede registrar la feature, borra el worktree y lo olvida en el registro. `delete_feature` valida contra una copia del proyecto antes de tocar git.
+- **Carrera de salida instantánea:** si un agente termina antes de marcarse `Running`, se respeta el estado de salida.
+- **Vigilancia:** hay un watcher por worktree presente. Los cambios generan `FilesChanged` + `GitChanged`. Un cambio en el `.git` del principal (commit, worktree creado fuera de Gryphus…) vuelve a sincronizar los worktrees y publica `GitChanged` para todos.
+- **Sin `GitRefresher` propio** (desviación del diseño inicial): el status se calcula cuando la UI lo pide tras un `GitChanged`. Como el watcher ya agrupa los eventos (150 ms), no hacía falta otra capa.
+- Los errores son `AppError` (`Domain` | `Port`) con el mismo `code()` estable que llega a la UI.
+
+Pruebas: 25 casos con fakes de todos los puertos (`crates/gryphus-app/tests/session.rs`).
+
 ## Modelo de concurrencia
 
 - Un único runtime `tokio` multihilo (el de Tauri).

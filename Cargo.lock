@@ -1732,6 +1732,11 @@ dependencies = [
 [[package]]
 name = "gryphus-app"
 version = "0.1.0"
+dependencies = [
+ "gryphus-core",
+ "gryphus-testkit",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "gryphus-core"
