@@ -77,6 +77,20 @@ pub fn ui_ready(app: AppHandle) -> u64 {
     })
 }
 
+// ── Cierre de ventana ────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn set_close_guard(window: WebviewWindow, state: State<'_, AppState>, req: CloseGuardReq) {
+    state.set_close_guard(window.label(), req.guard);
+}
+
+#[tauri::command]
+pub fn confirm_close(window: WebviewWindow, state: State<'_, AppState>) -> CmdResult<()> {
+    state.set_close_guard(window.label(), false);
+    // `destroy` no vuelve a emitir CloseRequested; `Destroyed` hace la limpieza.
+    window.destroy().map_err(internal)
+}
+
 // ── Proyecto y ventanas ──────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -123,7 +137,17 @@ pub async fn open_project(
     let label = if reuse_current {
         window.label().to_owned()
     } else {
-        format!("project-{}", ProjectId::from_canonical_root(&root))
+        // Una ventana de proyecto cuyo proyecto se cerró sigue viva con su etiqueta:
+        // reutilizarla haría fallar `build()` ("label already exists").
+        let base = format!("project-{}", ProjectId::from_canonical_root(&root));
+        let mut label = base.clone();
+        let mut n = 1;
+        while app.get_webview_window(&label).is_some() || state.registry().session(&label).is_some()
+        {
+            n += 1;
+            label = format!("{base}-{n}");
+        }
+        label
     };
     let events = Arc::new(TauriEvents {
         app: app.clone(),
@@ -139,14 +163,39 @@ pub async fn open_project(
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default()
     );
-    state.registry().bind(&label, session);
+    {
+        // Mientras se abría (await) otra llamada pudo abrir el mismo proyecto
+        // (doble clic): dos sesiones del mismo repo se pisarían al guardar.
+        let mut registry = state.registry();
+        if let Some(existing) = registry.label_for_root(&root) {
+            drop(registry);
+            drop(session); // recién abierta: sin agentes que detener
+            if let Some(w) = app.get_webview_window(&existing) {
+                let _ = w.set_focus();
+            }
+            return Ok(OpenProjectRes {
+                other_window: existing != window.label(),
+            });
+        }
+        // Dos aperturas simultáneas de proyectos distintos en una ventana vacía:
+        // la segunda sustituiría a la primera dejándola huérfana.
+        if registry.session(&label).is_some() {
+            return Err(IpcError {
+                code: "CONFLICT".into(),
+                message: "esta ventana ya está abriendo otro proyecto".into(),
+            });
+        }
+        registry.bind(&label, session.clone());
+    }
 
     if reuse_current {
         let _ = window.set_title(&title);
-    } else {
-        crate::window_builder(&app, &label, &title)
-            .build()
-            .map_err(internal)?;
+    } else if let Err(e) = crate::window_builder(&app, &label, &title).build() {
+        // Sin ventana, la sesión quedaría registrada para siempre: el proyecto no
+        // se podría volver a abrir y sus agentes nunca se detendrían.
+        state.registry().remove(&label);
+        let _ = session.close();
+        return Err(internal(e));
     }
     Ok(OpenProjectRes {
         other_window: !reuse_current,

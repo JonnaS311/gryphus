@@ -35,4 +35,16 @@ impl FsChangeSink for WatchSink {
             inner.publish_git_changed_for_all();
         }
     }
+
+    /// Rutas ignoradas por git: el explorador y el editor se actualizan, pero el
+    /// estado git no cambió (antes cada lote de `target/` relanzaba `git status`).
+    fn changed_ignored(&self, paths: Vec<RelPath>) {
+        let Some(inner) = self.session.upgrade() else {
+            return;
+        };
+        inner.publish(DomainEvent::FilesChanged {
+            worktree: self.worktree,
+            paths,
+        });
+    }
 }

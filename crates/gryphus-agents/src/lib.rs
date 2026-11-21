@@ -27,7 +27,7 @@ use gryphus_core::ports::{
 use gryphus_core::AgentId;
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 
-pub use resolve::resolve_program;
+pub use resolve::{batch_arg_problem, resolve_program};
 
 /// Ventana máxima de agrupación de salida (~1 frame).
 pub const COALESCE: Duration = Duration::from_millis(16);
@@ -248,6 +248,26 @@ impl AgentRuntimePort for PtyRuntime {
                     format!("no se encontró el programa {:?}", spec.program),
                 )
             })?;
+        // Por cmd.exe (scripts .cmd/.bat de npm), ciertos argumentos ejecutarían
+        // otra orden o llegarían alterados: mejor un error claro que lanzarlos.
+        if !prefix_args.is_empty() {
+            let script = prefix_args
+                .last()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            for arg in std::iter::once(&script).chain(&spec.args) {
+                if let Some(problem) = resolve::batch_arg_problem(arg) {
+                    return Err(PortError::new(
+                        PortErrorKind::InvalidInput,
+                        format!(
+                            "{:?} se lanza con cmd.exe y el argumento {arg:?} {problem}; \
+                             usa el ejecutable directamente o cambia el argumento",
+                            spec.program
+                        ),
+                    ));
+                }
+            }
+        }
 
         let pair = native_pty_system()
             .openpty(pty_size(spec.size))

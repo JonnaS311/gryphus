@@ -1,7 +1,7 @@
 //! Watcher recursivo con debounce. Un hilo agrupa los eventos de `notify` durante
 //! `debounce` y entrega un lote ordenado y sin duplicados.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use gryphus_core::ports::{FsChangeSink, PortError, PortErrorKind, PortResult, Subscription};
 use gryphus_core::RelPath;
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use notify::{RecursiveMode, Watcher};
 
 use crate::TMP_MARKER;
@@ -42,6 +43,7 @@ pub(crate) fn start(
     let stopped = Arc::new(AtomicBool::new(false));
     let stop_flag = stopped.clone();
     let roots = [root.to_path_buf(), root.canonicalize().unwrap_or_default()];
+    let mut ignores = IgnoreCache::new(root.to_path_buf());
     thread::Builder::new()
         .name("gryphus-fs-watch".into())
         .spawn(move || {
@@ -59,8 +61,16 @@ pub(crate) fn start(
                 if stopped.load(Ordering::SeqCst) {
                     return;
                 }
-                if !batch.is_empty() {
-                    sink.changed(batch.into_iter().collect());
+                if batch.iter().any(|p| p.as_str().ends_with(".gitignore")) {
+                    ignores.clear();
+                }
+                let (ignored, relevant): (Vec<RelPath>, Vec<RelPath>) =
+                    batch.into_iter().partition(|p| ignores.is_ignored(p));
+                if !relevant.is_empty() {
+                    sink.changed(relevant);
+                }
+                if !ignored.is_empty() {
+                    sink.changed_ignored(ignored);
                 }
             }
         })
@@ -70,6 +80,79 @@ pub(crate) fn start(
         stop_flag.store(true, Ordering::SeqCst);
         drop(watcher); // cierra el canal: el hilo termina
     }))
+}
+
+/// Decide si una ruta está ignorada por git, con las mismas fuentes que
+/// `list_dir`: `.gitignore` de cada directorio (el más profundo manda) y
+/// `.git/info/exclude`. Los matchers se cargan perezosamente por directorio.
+struct IgnoreCache {
+    root: PathBuf,
+    dirs: HashMap<PathBuf, Option<Gitignore>>,
+    exclude: Option<Option<Gitignore>>,
+}
+
+impl IgnoreCache {
+    fn new(root: PathBuf) -> Self {
+        Self {
+            root,
+            dirs: HashMap::new(),
+            exclude: None,
+        }
+    }
+
+    fn clear(&mut self) {
+        self.dirs.clear();
+        self.exclude = None;
+    }
+
+    fn load(dir: &Path, file: &Path) -> Option<Gitignore> {
+        if !file.is_file() {
+            return None;
+        }
+        let mut builder = GitignoreBuilder::new(dir);
+        builder.add(file);
+        builder.build().ok().filter(|g| !g.is_empty())
+    }
+
+    fn is_ignored(&mut self, rel: &RelPath) -> bool {
+        if rel.as_str() == ".git" {
+            return false; // estado interno de git: siempre relevante
+        }
+        let full = rel.to_path(&self.root);
+        let is_dir = full.is_dir();
+        // Del directorio más profundo a la raíz: el primer patrón que decide manda.
+        let mut dirs: Vec<PathBuf> = full
+            .ancestors()
+            .skip(1)
+            .take_while(|d| d.starts_with(&self.root))
+            .map(Path::to_path_buf)
+            .collect();
+        if dirs.is_empty() {
+            dirs.push(self.root.clone());
+        }
+        for dir in dirs {
+            let matcher = self
+                .dirs
+                .entry(dir.clone())
+                .or_insert_with(|| Self::load(&dir, &dir.join(".gitignore")));
+            if let Some(m) = matcher {
+                let decision = m.matched_path_or_any_parents(&full, is_dir);
+                if decision.is_ignore() {
+                    return true;
+                }
+                if decision.is_whitelist() {
+                    return false;
+                }
+            }
+        }
+        let root = self.root.clone();
+        let exclude = self.exclude.get_or_insert_with(|| {
+            Self::load(&root, &root.join(".git").join("info").join("exclude"))
+        });
+        exclude
+            .as_ref()
+            .is_some_and(|m| m.matched_path_or_any_parents(&full, is_dir).is_ignore())
+    }
 }
 
 /// Ruta absoluta del evento → `RelPath`. Todo lo de `.git/` se resume en `.git`.

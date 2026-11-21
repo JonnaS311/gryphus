@@ -37,12 +37,14 @@ pub fn AgentsPanel() -> impl IntoView {
             <Show when=move || features().is_empty() && !creating.get()>
                 <p class="hint">"Crea una feature con + para empezar."</p>
             </Show>
-            {move || {
-                features()
-                    .into_iter()
-                    .map(|feature| view! { <FeatureItem feature/> })
-                    .collect_view()
-            }}
+            // Con clave: cada refresco del proyecto (p. ej. un cambio de estado de un
+            // agente) recreaba todas las features y reiniciaba lo elegido en
+            // "Lanzar agente" (proveedor y worktree) mientras el usuario lo usaba.
+            <For
+                each=features
+                key=|f| (f.id, f.worktrees.clone())
+                children=|feature| view! { <FeatureItem feature/> }
+            />
         </aside>
     }
 }
@@ -161,12 +163,22 @@ async fn launch_initial_agent(store: Store, feature: u64, provider: String) {
 
 fn delete_feature(store: Store, id: u64) {
     spawn_local(async move {
-        if !store.ask("¿Eliminar esta feature?").await {
-            return;
-        }
-        let remove = store
-            .ask("¿Eliminar también sus worktrees del disco? (las branches se conservan)")
-            .await;
+        // Una sola pregunta con tres salidas: antes, "Cancelar" en la segunda
+        // pregunta (worktrees) no abortaba, sino que borraba conservando worktrees.
+        let remove = match store
+            .choose(
+                "¿Eliminar esta feature? Las branches se conservan en git.",
+                [
+                    "Eliminar con sus worktrees",
+                    "Eliminar y conservar worktrees",
+                ],
+            )
+            .await
+        {
+            Some(0) => true,
+            Some(_) => false,
+            None => return,
+        };
         let mut result = ipc::delete_feature(id, remove, false).await;
         if matches!(&result, Err(e) if e.code == "CONFLICT")
             && store

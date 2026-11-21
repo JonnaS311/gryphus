@@ -6,12 +6,12 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use gryphus_core::ports::{
     AgentChunk, AgentExit, AgentRuntimePort, Branch, ChunkSink, Diff, DiffBase, DirEntry,
-    FileContent, FileStatus, FsPort, GitPort, NewWorktree, PortErrorKind, SpawnSpec, StorePort,
-    Subscription, TermSize,
+    FileContent, FileStatus, FsPort, GitPort, NewWorktree, PortError, PortErrorKind, SpawnSpec,
+    StorePort, Subscription, TermSize,
 };
 use gryphus_core::{
     AgentId, AgentStatus, BranchName, Config, DomainError, DomainEvent, EventSink, FeatureId,
-    FeatureName, Project, ProjectId, ProviderId, RelPath, WorktreeId,
+    FeatureName, PathError, Project, ProjectId, ProviderId, RelPath, WorktreeId,
 };
 
 use crate::error::AppResult;
@@ -49,6 +49,9 @@ pub(crate) struct Inner {
     ports: Ports,
     config: Config,
     project: Mutex<Project>,
+    /// Ordena los guardados: se toma antes que `project` y se suelta tras guardar,
+    /// así una instantánea antigua nunca se escribe después de una más reciente.
+    save: Mutex<()>,
     watches: Mutex<HashMap<WorktreeId, Subscription>>,
 }
 
@@ -90,6 +93,7 @@ impl ProjectSession {
             ports,
             config,
             project: Mutex::new(project),
+            save: Mutex::new(()),
             watches: Mutex::new(HashMap::new()),
         });
         inner.ensure_watches();
@@ -181,19 +185,39 @@ impl ProjectSession {
     ) -> AppResult<()> {
         let inner = &self.inner;
         // Valida contra una copia antes de tocar git.
-        let to_remove: Vec<(WorktreeId, PathBuf)> = {
+        let (owned, to_remove): (Vec<WorktreeId>, Vec<(WorktreeId, PathBuf)>) = {
             let p = lock(&inner.project);
             let mut probe = p.clone();
             let removed = probe.delete_feature(feature)?;
-            removed
+            let worktrees: Vec<_> = removed
                 .worktrees()
                 .iter()
                 .filter_map(|id| p.worktree(*id).ok())
-                .filter(|w| !w.is_main() && !w.is_missing())
-                .map(|w| (w.id(), w.path().to_path_buf()))
-                .collect()
+                .filter(|w| !w.is_main())
+                .collect();
+            (
+                worktrees.iter().map(|w| w.id()).collect(),
+                worktrees
+                    .iter()
+                    .filter(|w| !w.is_missing())
+                    .map(|w| (w.id(), w.path().to_path_buf()))
+                    .collect(),
+            )
         };
         if remove_worktrees {
+            // Sin `force`, comprueba TODOS antes de borrar ninguno: si el segundo
+            // tenía cambios, el primero ya estaba borrado y la feature quedaba a medias.
+            if !force {
+                for (_, path) in &to_remove {
+                    if !inner.ports.git.status(path)?.is_empty() {
+                        return Err(PortError::new(
+                            PortErrorKind::Conflict,
+                            format!("{} contains modified or untracked files", path.display()),
+                        )
+                        .into());
+                    }
+                }
+            }
             for (_, path) in &to_remove {
                 inner.ports.git.remove_worktree(&inner.root, path, force)?;
             }
@@ -201,16 +225,18 @@ impl ProjectSession {
         inner.mutate(|p| p.delete_feature(feature))?;
         if remove_worktrees {
             inner.refresh_worktrees()?;
-            inner.mutate(|p| {
-                for (id, _) in &to_remove {
-                    if p.worktree(*id).is_ok_and(|w| w.is_missing()) {
-                        p.forget_worktree(*id)?;
-                    }
-                }
-                Ok(())
-            })?;
-            inner.ensure_watches();
         }
+        // Se olvidan los que ya no existen: los recién borrados y los que ya faltaban
+        // (antes estos quedaban para siempre en el registro, sin feature y sin uso).
+        inner.mutate(|p| {
+            for id in &owned {
+                if p.worktree(*id).is_ok_and(|w| w.is_missing()) {
+                    p.forget_worktree(*id)?;
+                }
+            }
+            Ok(())
+        })?;
+        inner.ensure_watches();
         inner.publish(DomainEvent::FeatureRemoved(feature));
         inner.publish(DomainEvent::WorktreesChanged);
         Ok(())
@@ -250,6 +276,11 @@ impl ProjectSession {
     pub fn restart_agent(&self, agent: AgentId) -> AppResult<()> {
         self.inner
             .mutate(|p| p.set_agent_status(agent, AgentStatus::Starting))?;
+        // Sin este evento la UI seguía mostrando "terminado" hasta el siguiente cambio.
+        self.inner.publish(DomainEvent::AgentStatusChanged {
+            agent,
+            status: AgentStatus::Starting,
+        });
         self.inner.launch(agent)
     }
 
@@ -312,11 +343,17 @@ impl ProjectSession {
 
     pub fn write_file(&self, worktree: WorktreeId, file: &str, content: &[u8]) -> AppResult<()> {
         let root = self.inner.worktree_path(worktree)?;
-        Ok(self
-            .inner
-            .ports
-            .fs
-            .write_file(&root, &RelPath::parse(file)?, content)?)
+        let rel = RelPath::parse(file)?;
+        // `.git` (carpeta o archivo de un worktree enlazado) es de git: escribir ahí
+        // podría instalar hooks o corromper el repo. El explorador ya lo oculta.
+        if let Some(first) = rel
+            .components()
+            .next()
+            .filter(|c| c.eq_ignore_ascii_case(".git"))
+        {
+            return Err(PathError::InvalidComponent(first.to_owned()).into());
+        }
+        Ok(self.inner.ports.fs.write_file(&root, &rel, content)?)
     }
 
     // ── Git ──────────────────────────────────────────────────────────────────
@@ -359,8 +396,7 @@ impl ProjectSession {
             let _ = self.inner.ports.agents.kill(agent);
         }
         lock(&self.inner.watches).clear();
-        let snapshot = self.project();
-        Ok(self.inner.ports.store.save_project(&snapshot)?)
+        self.inner.mutate(|_| Ok(()))
     }
 }
 
@@ -383,6 +419,7 @@ impl Inner {
 
     /// Aplica una mutación de dominio y persiste. El lock se suelta antes de guardar.
     fn mutate<T>(&self, f: impl FnOnce(&mut Project) -> Result<T, DomainError>) -> AppResult<T> {
+        let _save = lock(&self.save);
         let (value, snapshot) = {
             let mut p = lock(&self.project);
             let value = f(&mut p)?;

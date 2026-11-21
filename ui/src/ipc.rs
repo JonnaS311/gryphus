@@ -123,6 +123,14 @@ pub async fn git_overview() -> IpcResult<GitOverviewDto> {
     call(cmd::GIT_OVERVIEW).await
 }
 
+pub async fn set_close_guard(guard: bool) -> IpcResult<()> {
+    invoke(cmd::SET_CLOSE_GUARD, Some(&CloseGuardReq { guard })).await
+}
+
+pub async fn confirm_close() -> IpcResult<()> {
+    call(cmd::CONFIRM_CLOSE).await
+}
+
 /// Marca el arranque en frío (ms desde el inicio del proceso).
 pub async fn ui_ready() -> IpcResult<u64> {
     call(cmd::UI_READY).await

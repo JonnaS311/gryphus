@@ -19,8 +19,10 @@ pub struct Config {
     pub worktrees_dir: Option<PathBuf>,
 }
 
+/// `deny_unknown_fields`: un error tipográfico (`comand = …`) debe ser un error
+/// visible, no un proveedor que queda "sin configurar" sin explicación.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ProviderConfig {
     pub command: String,
     pub args: Vec<String>,

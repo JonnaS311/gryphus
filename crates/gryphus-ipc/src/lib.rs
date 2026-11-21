@@ -37,6 +37,11 @@ pub mod cmd {
     pub const GIT_OVERVIEW: &str = "git_overview";
     /// La UI lo llama al montarse; devuelve ms desde el arranque del proceso.
     pub const UI_READY: &str = "ui_ready";
+    /// Con la guarda activa, cerrar la ventana no la cierra: emite
+    /// [`super::event::CLOSE_REQUESTED`] para que la UI pregunte. Req: [`super::CloseGuardReq`].
+    pub const SET_CLOSE_GUARD: &str = "set_close_guard";
+    /// La UI confirmó el cierre: destruye la ventana (detiene agentes y guarda).
+    pub const CONFIRM_CLOSE: &str = "confirm_close";
 }
 
 /// Nombres de eventos (Rust → ventana del proyecto). Son notificaciones: la UI
@@ -54,6 +59,8 @@ pub mod event {
     pub const GIT_CHANGED: &str = "git:changed";
     /// Payload: `()`
     pub const WORKTREES_CHANGED: &str = "worktrees:changed";
+    /// Se pidió cerrar la ventana con la guarda activa. Payload: `()`
+    pub const CLOSE_REQUESTED: &str = "window:close-requested";
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -201,6 +208,12 @@ pub struct WriteFileReq {
     pub worktree: u64,
     pub path: String,
     pub content: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CloseGuardReq {
+    /// `true` si cerrar perdería algo (agentes activos, cambios sin guardar).
+    pub guard: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
