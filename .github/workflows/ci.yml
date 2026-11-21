@@ -4,6 +4,15 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+# Un push nuevo a la misma rama/PR cancela la ejecución anterior.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -17,7 +26,7 @@ jobs:
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Dependencias de sistema (Tauri en Linux)
         if: runner.os == 'Linux'
@@ -47,12 +56,15 @@ jobs:
       - name: Clippy (UI en wasm32)
         run: cargo clippy -p gryphus-ui --target wasm32-unknown-unknown -- -D warnings
 
+      # --no-fail-fast: si falla un binario de pruebas, los demás se ejecutan igual
       - name: Pruebas
-        run: cargo test --workspace
+        run: cargo test --workspace --no-fail-fast
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: ui/js/package-lock.json
 
       - name: Pegamento JS (decodificador)
         working-directory: ui/js
@@ -69,7 +81,7 @@ jobs:
     env:
       GRYPHUS_E2E: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Dependencias de sistema (Linux)
         if: runner.os == 'Linux'
@@ -103,7 +115,7 @@ jobs:
 
       - name: Capturas
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-screens-${{ matrix.os }}
           path: target/e2e-screens

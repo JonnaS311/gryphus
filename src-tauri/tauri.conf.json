@@ -1,7 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Gryphus",
-  "version": "0.1.0",
   "identifier": "dev.gryphus.app",
   "build": {
     "beforeDevCommand": { "script": "trunk serve", "cwd": "../ui" },
@@ -17,7 +16,14 @@
     }
   },
   "bundle": {
-    "active": false,
+    "active": true,
+    "targets": "all",
+    "category": "DeveloperTool",
+    "shortDescription": "Entorno de desarrollo de agentes de código",
+    "longDescription": "Gryphus organiza agentes de código (opencode, Claude Code, Codex) por feature, cada uno en su propio worktree de git, con terminal, editor y diff integrados.",
+    "copyright": "Copyright (c) 2026 Jonnathan Sotelo. Licencia MIT.",
+    "license": "MIT",
+    "homepage": "https://github.com/JonnaS311/gryphus",
     "icon": ["icons/icon.png", "icons/icon.ico"]
   }
 }

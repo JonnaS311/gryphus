@@ -4,6 +4,8 @@ description = "Binario Tauri de Gryphus: composition root, comandos IPC y gestio
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [lib]
 # Sufijo _lib para evitar colision de nombres entre lib y bin en Windows.

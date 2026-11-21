@@ -2,7 +2,7 @@
 
 Gryphus es un entorno de desarrollo de agentes (opencode, Claude Code, Codex) construido con **Rust + Tauri**. Tiene dos objetivos: **simplicidad** y **eficiencia**.
 
-> Estado: **diseño**. Aún no hay código. Esta carpeta es la fuente de verdad para implementar.
+> Estado: **implementado** (hitos 0–10 del [roadmap](roadmap.md)). Esta carpeta sigue siendo la fuente de verdad del diseño.
 
 ## Qué hace
 

@@ -6,6 +6,8 @@ members = ["crates/*", "src-tauri", "ui", "tools/*", "e2e"]
 version = "0.1.0"
 edition = "2021"
 publish = false
+license = "MIT"
+repository = "https://github.com/JonnaS311/gryphus"
 
 [workspace.dependencies]
 # Cada hito añade aquí sus dependencias cuando las usa (Cargo avisa de las no usadas).
