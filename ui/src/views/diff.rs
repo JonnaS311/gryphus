@@ -5,6 +5,9 @@ use gryphus_ipc::{DiffDto, FileDiffDto, LineKindDto};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 
+use crate::bridge::dom;
+use crate::bridge::icons as bridge_icons;
+use crate::icons;
 use crate::ipc;
 use crate::layout::CenterView;
 use crate::logic;
@@ -15,6 +18,7 @@ pub fn DiffView() -> impl IntoView {
     let store = expect_context::<Store>();
     let (diff, set_diff) = signal(None::<DiffDto>);
     let (from_main, set_from_main) = signal(false);
+    let (selected, set_selected) = signal(None::<String>);
     let main_branch = move || {
         store.project.with(|p| {
             p.as_ref()
@@ -63,21 +67,79 @@ pub fn DiffView() -> impl IntoView {
                 }}
             </span>
         </div>
-        <div class="diff">
-            {move || {
-                let files = diff.with(|d| d.as_ref().map(|d| d.files.clone()).unwrap_or_default());
-                if files.is_empty() {
-                    view! { <p class="hint">"Sin cambios."</p> }.into_any()
-                } else {
+        <div class="diff-body">
+            <nav class="diff-files" aria-label="Archivos modificados">
+                {move || {
+                    let files = diff.with(|d| d.as_ref().map(|d| d.files.clone()).unwrap_or_default());
                     files
                         .into_iter()
-                        .map(|file| view! { <DiffFile file/> })
+                        .map(|file| {
+                            let (added, removed) = logic::diff_counts(&file);
+                            let (dir, name) = match file.path.rsplit_once('/') {
+                                Some((dir, name)) => (dir.to_string(), name.to_string()),
+                                None => (String::new(), file.path.clone()),
+                            };
+                            let path = file.path.clone();
+                            let is_selected = {
+                                let path = path.clone();
+                                move || selected.with(|s| s.as_deref() == Some(path.as_str()))
+                            };
+                            let target = path.clone();
+                            view! {
+                                <button
+                                    class="diff-files-item"
+                                    class:selected=is_selected
+                                    title=path.clone()
+                                    data-path=path.clone()
+                                    on:click=move |_| {
+                                        set_selected.set(Some(target.clone()));
+                                        dom::reveal(&file_anchor(&target));
+                                    }
+                                >
+                                    <img
+                                        class="ficon"
+                                        alt=""
+                                        src={
+                                            let name = name.clone();
+                                            move || {
+                                                store.icons_ready.track();
+                                                icons::url(&icons::file_icon(&name, bridge_icons::get))
+                                            }
+                                        }
+                                    />
+                                    <span class="diff-files-name ellipsis">
+                                        {name}
+                                        <span class="diff-files-dir muted">{dir}</span>
+                                    </span>
+                                    <span class="added">{format!("+{added}")}</span>
+                                    <span class="removed">{format!("−{removed}")}</span>
+                                </button>
+                            }
+                        })
                         .collect_view()
-                        .into_any()
-                }
-            }}
+                }}
+            </nav>
+            <div class="diff">
+                {move || {
+                    let files = diff.with(|d| d.as_ref().map(|d| d.files.clone()).unwrap_or_default());
+                    if files.is_empty() {
+                        view! { <p class="hint">"Sin cambios."</p> }.into_any()
+                    } else {
+                        files
+                            .into_iter()
+                            .map(|file| view! { <DiffFile file/> })
+                            .collect_view()
+                            .into_any()
+                    }
+                }}
+            </div>
         </div>
     }
+}
+
+/// `id` del bloque de un archivo en el diff; la lista lateral salta a él.
+fn file_anchor(path: &str) -> String {
+    format!("diff-file:{path}")
 }
 
 #[component]
@@ -96,7 +158,7 @@ fn DiffFile(file: FileDiffDto) -> impl IntoView {
     };
 
     view! {
-        <details class="diff-file" open=true data-path=file.path.clone()>
+        <details class="diff-file" open=true id=file_anchor(&file.path) data-path=file.path.clone()>
             <summary>
                 <span class="path" on:click=open title="Abrir en el editor">
                     {file.path.clone()}

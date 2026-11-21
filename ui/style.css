@@ -132,7 +132,16 @@ input:focus, select:focus { outline: 1px solid var(--accent); outline-offset: -1
 
 /* ── Diff ───────────────────────────────────────────────────────────────── */
 
-.diff { flex: 1; overflow: auto; padding: 8px; font-family: var(--mono); font-size: var(--mono-size); }
+.diff-body { flex: 1; min-height: 0; display: flex; }
+.diff-files { width: 240px; flex: none; overflow: auto; border-right: 1px solid var(--border); background: var(--panel); padding: 4px 0; }
+.diff-files:empty { display: none; }
+.diff-files-item { display: flex; align-items: center; gap: 6px; width: 100%; padding: 3px 10px; background: none; border: none; border-radius: 0; text-align: left; font-size: 12px; }
+.diff-files-item:hover:not(:disabled) { background: var(--panel-2); }
+.diff-files-item.selected { background: var(--panel-2); box-shadow: inset 2px 0 var(--accent); }
+.diff-files-name { flex: 1; }
+.diff-files-dir { margin-left: 6px; font-size: 11px; }
+.diff-files-item .added, .diff-files-item .removed { font-family: var(--mono); font-size: 11px; flex: none; }
+.diff { flex: 1; min-width: 0; overflow: auto; padding: 8px; font-family: var(--mono); font-size: var(--mono-size); }
 .diff-file { border: 1px solid var(--border); border-radius: 4px; margin-bottom: 8px; background: var(--panel); }
 .diff-file summary { padding: 6px 8px; cursor: pointer; display: flex; gap: 10px; }
 .diff-file .path { flex: 1; }
