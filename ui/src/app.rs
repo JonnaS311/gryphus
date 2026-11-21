@@ -8,7 +8,7 @@ use crate::bridge::tauri::listen;
 use crate::ipc;
 use crate::layout::CenterView;
 use crate::panels::{AgentsPanel, Explorer, Navbar, StatusBar};
-use crate::store::Store;
+use crate::store::{Answer, ConfirmKind, Store};
 use crate::views::{MainView, Welcome};
 
 #[component]
@@ -133,8 +133,8 @@ fn ConfirmDialog() -> impl IntoView {
             return;
         }
         match ev.key().as_str() {
-            "Escape" => store.answer(false),
-            "Enter" => store.answer(true),
+            "Escape" => store.answer(Answer::Cancel),
+            "Enter" => store.answer(Answer::Accept),
             _ => return,
         }
         ev.prevent_default();
@@ -143,23 +143,32 @@ fn ConfirmDialog() -> impl IntoView {
     move || {
         store
             .confirm
-            .with(|c| c.as_ref().map(|c| c.message.clone()))
-            .map(|message| {
+            .with(|c| c.as_ref().map(|c| (c.message.clone(), c.kind)))
+            .map(|(message, kind)| {
+                let save = kind == ConfirmKind::SaveChanges;
                 view! {
-                    <div class="backdrop over" on:click=move |_| store.answer(false)></div>
+                    <div class="backdrop over" on:click=move |_| store.answer(Answer::Cancel)></div>
                     <section class="confirm" role="alertdialog" aria-modal="true">
                         <p class="confirm-message">{message}</p>
                         <div class="confirm-actions">
-                            <button id="confirm-cancel" on:click=move |_| store.answer(false)>
+                            <button id="confirm-cancel" on:click=move |_| store.answer(Answer::Cancel)>
                                 "Cancelar"
                             </button>
+                            <Show when=move || save>
+                                <button
+                                    id="confirm-discard"
+                                    on:click=move |_| store.answer(Answer::Discard)
+                                >
+                                    "No guardar"
+                                </button>
+                            </Show>
                             <button
                                 id="confirm-accept"
                                 class="primary"
                                 autofocus=true
-                                on:click=move |_| store.answer(true)
+                                on:click=move |_| store.answer(Answer::Accept)
                             >
-                                "Aceptar"
+                                {if save { "Guardar" } else { "Aceptar" }}
                             </button>
                         </div>
                     </section>

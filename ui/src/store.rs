@@ -15,16 +15,45 @@ use crate::layout::CenterView;
 use crate::logic;
 use crate::settings::{Settings, STORAGE_KEY};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct OpenFile {
     pub worktree: u64,
     pub path: String,
 }
 
+impl OpenFile {
+    /// Clave del documento en el editor JS.
+    pub fn key(&self) -> String {
+        format!("{}:{}", self.worktree, self.path)
+    }
+
+    pub fn name(&self) -> &str {
+        self.path.rsplit_once('/').map_or(&self.path, |(_, n)| n)
+    }
+}
+
+/// Qué botones muestra el modal de confirmación.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfirmKind {
+    /// Cancelar / Aceptar.
+    Accept,
+    /// Cancelar / No guardar / Guardar.
+    SaveChanges,
+}
+
+/// Respuesta del modal. En [`ConfirmKind::Accept`] solo hay `Accept` o `Cancel`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Answer {
+    Accept,
+    Discard,
+    Cancel,
+}
+
 /// Confirmación pendiente (modal `app::ConfirmDialog`).
 pub struct ConfirmRequest {
     pub message: String,
-    tx: oneshot::Sender<bool>,
+    pub kind: ConfirmKind,
+    tx: oneshot::Sender<Answer>,
 }
 
 #[derive(Clone, Copy)]
@@ -37,7 +66,12 @@ pub struct Store {
     /// Worktree que siguen el explorador, el diff y la barra de estado.
     pub active_worktree: RwSignal<Option<u64>>,
     pub view: RwSignal<CenterView>,
+    /// Pestaña activa del editor. Asignarla abre el archivo en una pestaña si no lo estaba.
     pub open_file: RwSignal<Option<OpenFile>>,
+    /// Pestañas abiertas del editor, en orden.
+    pub open_files: RwSignal<Vec<OpenFile>>,
+    /// Pestañas con cambios sin guardar.
+    pub dirty_files: RwSignal<HashSet<OpenFile>>,
     pub status: RwSignal<Vec<FileStatusDto>>,
     pub overview: RwSignal<Option<GitOverviewDto>>,
     /// Último lote de cambios en disco: (worktree, rutas).
@@ -65,6 +99,8 @@ impl Store {
             active_worktree: RwSignal::new(None),
             view: RwSignal::new(CenterView::Agent),
             open_file: RwSignal::new(None),
+            open_files: RwSignal::new(Vec::new()),
+            dirty_files: RwSignal::new(HashSet::new()),
             status: RwSignal::new(Vec::new()),
             overview: RwSignal::new(None),
             fs_change: RwSignal::new((0, Vec::new())),
@@ -80,19 +116,27 @@ impl Store {
 
     /// Pide confirmación con el modal de la app. Una petición nueva cancela la anterior.
     pub async fn ask(self, message: impl Into<String>) -> bool {
-        let message = message.into();
-        if let Some(answer) = crate::bridge::dialog::e2e_auto_confirm(&message) {
-            return answer;
+        self.prompt(message.into(), ConfirmKind::Accept).await == Answer::Accept
+    }
+
+    /// Pregunta si guardar los cambios: Guardar (`Accept`), No guardar (`Discard`) o `Cancel`.
+    pub async fn ask_save(self, message: impl Into<String>) -> Answer {
+        self.prompt(message.into(), ConfirmKind::SaveChanges).await
+    }
+
+    async fn prompt(self, message: String, kind: ConfirmKind) -> Answer {
+        if let Some(accepted) = crate::bridge::dialog::e2e_auto_confirm(&message) {
+            return if accepted { Answer::Accept } else { Answer::Cancel };
         }
         let (tx, rx) = oneshot::channel();
-        self.confirm.set(Some(ConfirmRequest { message, tx }));
-        rx.await.unwrap_or(false)
+        self.confirm.set(Some(ConfirmRequest { message, kind, tx }));
+        rx.await.unwrap_or(Answer::Cancel)
     }
 
     /// Responde la confirmación pendiente y cierra el modal.
-    pub fn answer(&self, accepted: bool) {
+    pub fn answer(&self, answer: Answer) {
         if let Some(req) = self.confirm.try_update(Option::take).flatten() {
-            let _ = req.tx.send(accepted);
+            let _ = req.tx.send(answer);
         }
     }
 
@@ -147,6 +191,8 @@ impl Store {
             self.selected_feature.set(None);
             self.active_worktree.set(None);
             self.open_file.set(None);
+            self.open_files.set(Vec::new());
+            self.dirty_files.set(HashSet::new());
             self.status.set(Vec::new());
             self.overview.set(None);
             self.expanded.set(HashSet::new());

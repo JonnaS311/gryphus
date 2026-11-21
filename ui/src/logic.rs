@@ -85,6 +85,27 @@ pub fn diff_counts(file: &FileDiffDto) -> (usize, usize) {
         })
 }
 
+/// Índice de la pestaña que queda activa al cerrar la activa en `closed`, sobre la
+/// lista ya sin ella (`remaining` pestañas): la de su derecha, o la última.
+pub fn tab_after_close(remaining: usize, closed: usize) -> Option<usize> {
+    if remaining == 0 {
+        None
+    } else {
+        Some(closed.min(remaining - 1))
+    }
+}
+
+/// Carpeta a mostrar junto al nombre de una pestaña cuando otra pestaña tiene el
+/// mismo nombre de archivo (como VS Code). `None` si el nombre es único.
+pub fn tab_hint<'a>(paths: impl IntoIterator<Item = &'a str>, path: &str) -> Option<String> {
+    let split = |p: &'a str| p.rsplit_once('/').unwrap_or(("", p));
+    let (dir, name) = path.rsplit_once('/').unwrap_or(("", path));
+    let duplicated = paths
+        .into_iter()
+        .any(|p| p != path && split(p).1 == name);
+    duplicated.then(|| if dir.is_empty() { "./".into() } else { dir.to_owned() })
+}
+
 /// `↑2 ↓1`, o vacío si está al día o no tiene upstream.
 pub fn tracking_text(b: &BranchDto) -> String {
     let mut parts = Vec::new();
@@ -219,5 +240,22 @@ mod tests {
         };
         assert_eq!(tracking_text(&b(2, 1)), "↑2 ↓1");
         assert_eq!(tracking_text(&b(0, 0)), "");
+    }
+
+    #[test]
+    fn closing_a_tab_activates_its_right_neighbour_or_the_last() {
+        assert_eq!(tab_after_close(0, 0), None, "no quedan pestañas");
+        assert_eq!(tab_after_close(2, 0), Some(0), "la de la derecha ocupa su lugar");
+        assert_eq!(tab_after_close(2, 1), Some(1));
+        assert_eq!(tab_after_close(2, 2), Some(1), "era la última: la anterior");
+    }
+
+    #[test]
+    fn tab_hint_only_for_repeated_names() {
+        let tabs = ["src/main.rs", "ui/src/main.rs", "Cargo.toml", "main.rs"];
+        assert_eq!(tab_hint(tabs, "src/main.rs").as_deref(), Some("src"));
+        assert_eq!(tab_hint(tabs, "ui/src/main.rs").as_deref(), Some("ui/src"));
+        assert_eq!(tab_hint(tabs, "main.rs").as_deref(), Some("./"));
+        assert_eq!(tab_hint(tabs, "Cargo.toml"), None);
     }
 }

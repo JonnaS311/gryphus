@@ -97,6 +97,21 @@ async fn feature_agent_editor_and_diff() {
         "hola mundo"
     );
     app.screenshot("04-editor").await;
+
+    // 6b. Pestañas: abrir otro archivo añade una pestaña; volver conserva el texto; cerrar la quita.
+    let tab = |path: &str| format!(r#".editor-tab[data-path="{path}"]"#);
+    app.click(r#".tree-row[data-path="README.md"]"#).await;
+    app.wait_text("#editor-path", "README.md").await;
+    app.wait_css(&format!("{}.active", tab("README.md"))).await;
+    app.wait_css(&tab("src/nuevo.txt")).await;
+    app.click(&tab("src/nuevo.txt")).await;
+    app.wait_text("#editor-path", "src/nuevo.txt").await;
+    app.wait_text(".cm-content", "hola mundo").await;
+    app.click(&format!("{} .editor-tab-close", tab("README.md")))
+        .await;
+    app.wait_gone(&tab("README.md")).await;
+    app.screenshot("04b-pestanas").await;
+
     app.click("#tab-diff").await;
     app.wait_text(diff_file, "hola mundo").await;
 

@@ -27,7 +27,16 @@ pub fn Navbar() -> impl IntoView {
                 p.agents.iter().filter(|a| a.status.is_active()).count()
             })
         });
+        let unsaved = store.dirty_files.with_untracked(|d| d.len());
         spawn_local(async move {
+            if unsaved > 0
+                && !store.ask(format!(
+                    "Hay {unsaved} archivo(s) con cambios sin guardar que se perderán. ¿Cerrar el proyecto?"
+                ))
+                .await
+            {
+                return;
+            }
             if active > 0
                 && !store.ask(format!(
                     "Hay {active} agente(s) en ejecución. Cerrar el proyecto los detendrá. ¿Continuar?"

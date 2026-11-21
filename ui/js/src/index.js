@@ -9,7 +9,7 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
 
 import { basicSetup } from 'codemirror';
-import { EditorState, Compartment, Prec } from '@codemirror/state';
+import { EditorState, Prec } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { rust } from '@codemirror/lang-rust';
@@ -185,9 +185,25 @@ function languageFor(name) {
   return make ? make() : [];
 }
 
+/**
+ * Editor con varios documentos abiertos (pestañas). Cada documento guarda su propio
+ * `EditorState` (texto, cursor, historial de deshacer) y su texto "limpio"; una sola
+ * `EditorView` muestra el activo. `onSave(text)` es Ctrl+S sobre el activo y
+ * `onDirty(key, dirty)` avisa cuando un documento pasa a tener o no cambios sin guardar.
+ */
 export function createEditor(el, onSave, onDirty) {
-  const language = new Compartment();
-  let clean = '';
+  /** key → { state, clean, dirty } */
+  const docs = new Map();
+  let active = null;
+
+  const isDirty = (doc) => doc.state.doc.toString() !== doc.clean;
+  const notify = (key, doc) => {
+    const dirty = isDirty(doc);
+    if (dirty !== doc.dirty) {
+      doc.dirty = dirty;
+      onDirty(key, dirty);
+    }
+  };
 
   const extensions = (name) => [
     Prec.high(
@@ -204,9 +220,12 @@ export function createEditor(el, onSave, onDirty) {
     ),
     basicSetup,
     oneDark,
-    language.of(languageFor(name)),
+    languageFor(name),
     EditorView.updateListener.of((update) => {
-      if (update.docChanged) onDirty(update.state.doc.toString() !== clean);
+      const doc = active && docs.get(active);
+      if (!doc || !update.docChanged) return;
+      doc.state = update.state;
+      notify(active, doc);
     }),
     EditorView.theme({ '&': { height: '100%' }, '.cm-scroller': { overflow: 'auto' } }),
   ];
@@ -216,24 +235,83 @@ export function createEditor(el, onSave, onDirty) {
     state: EditorState.create({ doc: '', extensions: extensions('') }),
   });
 
+  /** Guarda el estado de la vista (cursor, scroll de selección) en el documento activo. */
+  const stash = () => {
+    const doc = active && docs.get(active);
+    if (doc) doc.state = view.state;
+  };
+
+  const blank = () => {
+    active = null;
+    view.setState(EditorState.create({ doc: '', extensions: extensions('') }));
+  };
+
   return {
-    /** Reemplaza el documento (y el historial de deshacer) por el de otro archivo. */
-    setDoc(text, name) {
-      clean = text;
-      view.setState(EditorState.create({ doc: text, extensions: extensions(name) }));
-      onDirty(false);
+    hasDoc(key) {
+      return docs.has(key);
     },
-    markSaved(text) {
-      clean = text;
-      onDirty(view.state.doc.toString() !== clean);
+    /** Abre (o reemplaza) un documento con texto recién leído de disco y lo muestra. */
+    openDoc(key, text, name) {
+      stash();
+      const doc = { state: EditorState.create({ doc: text, extensions: extensions(name) }), clean: text, dirty: false };
+      const prev = docs.get(key);
+      docs.set(key, doc);
+      if (prev?.dirty) onDirty(key, false);
+      active = key;
+      view.setState(doc.state);
     },
-    getText() {
-      return view.state.doc.toString();
+    /** Muestra un documento ya abierto conservando su historial. */
+    showDoc(key) {
+      const doc = docs.get(key);
+      if (!doc || key === active) return;
+      stash();
+      active = key;
+      view.setState(doc.state);
+    },
+    /** Cambió en disco y no tiene cambios sin guardar: reemplaza su texto. */
+    reloadDoc(key, text) {
+      const doc = docs.get(key);
+      if (!doc) return;
+      doc.clean = text; // antes de despachar: el updateListener compara contra él
+      const current = key === active ? view.state : doc.state;
+      if (current.doc.toString() === text) {
+        // Nuestro propio guardado (o nada cambió): no mover el cursor.
+        notify(key, doc);
+        return;
+      }
+      if (key === active) {
+        view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
+        doc.state = view.state;
+      } else {
+        doc.state = doc.state.update({ changes: { from: 0, to: doc.state.doc.length, insert: text } }).state;
+      }
+      notify(key, doc);
+    },
+    closeDoc(key) {
+      docs.delete(key);
+      if (key === active) blank();
+    },
+    /** Sin documento activo (p. ej. archivo binario): vista vacía. */
+    clear() {
+      stash();
+      blank();
+    },
+    markSaved(key, text) {
+      const doc = docs.get(key);
+      if (!doc) return;
+      doc.clean = text;
+      notify(key, doc);
+    },
+    getText(key) {
+      const doc = docs.get(key);
+      if (!doc) return null;
+      return key === active ? view.state.doc.toString() : doc.state.doc.toString();
     },
     focus() {
       view.focus();
     },
     destroy() {
+      docs.clear();
       view.destroy();
     },
   };
