@@ -7,10 +7,12 @@
 
 mod app;
 mod bridge;
+mod icons;
 mod ipc;
 mod layout;
 mod logic;
 mod panels;
+mod settings;
 mod store;
 mod views;
 

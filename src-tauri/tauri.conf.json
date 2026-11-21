@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "identifier": "dev.gryphus.app",
   "build": {
-    "beforeDevCommand": "trunk --config ui/Trunk.toml serve",
-    "beforeBuildCommand": "trunk --config ui/Trunk.toml build --release",
+    "beforeDevCommand": { "script": "trunk serve", "cwd": "../ui" },
+    "beforeBuildCommand": { "script": "trunk build --release", "cwd": "../ui" },
     "devUrl": "http://127.0.0.1:1420",
     "frontendDist": "../ui/dist"
   },

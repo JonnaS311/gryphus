@@ -4,7 +4,6 @@ use gryphus_ipc::{AgentDto, FeatureDto, WorktreeChoiceDto};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 
-use crate::bridge::dialog::confirm;
 use crate::ipc;
 use crate::logic;
 use crate::store::Store;
@@ -123,14 +122,18 @@ fn NewFeatureForm(open: WriteSignal<bool>) -> impl IntoView {
 }
 
 fn delete_feature(store: Store, id: u64) {
-    if !confirm("¿Eliminar esta feature?") {
-        return;
-    }
-    let remove = confirm("¿Eliminar también sus worktrees del disco? (las branches se conservan)");
     spawn_local(async move {
+        if !store.ask("¿Eliminar esta feature?").await {
+            return;
+        }
+        let remove = store
+            .ask("¿Eliminar también sus worktrees del disco? (las branches se conservan)")
+            .await;
         let mut result = ipc::delete_feature(id, remove, false).await;
         if matches!(&result, Err(e) if e.code == "CONFLICT")
-            && confirm("Hay cambios sin commit en sus worktrees. ¿Eliminar de todas formas?")
+            && store
+                .ask("Hay cambios sin commit en sus worktrees. ¿Eliminar de todas formas?")
+                .await
         {
             result = ipc::delete_feature(id, remove, true).await;
         }
@@ -244,12 +247,17 @@ fn AgentRow(agent: AgentDto) -> impl IntoView {
     };
     let remove = move |ev: leptos::ev::MouseEvent| {
         ev.stop_propagation();
-        if !confirm("¿Quitar este agente de la lista?") {
-            return;
-        }
         spawn_local(async move {
+            if !store.ask("¿Quitar este agente de la lista?").await {
+                return;
+            }
             match ipc::remove_agent(id).await {
-                Ok(()) => store.refresh_project(),
+                Ok(()) => {
+                    if store.selected_agent.get_untracked() == Some(id) {
+                        store.selected_agent.set(None);
+                    }
+                    store.refresh_project();
+                }
                 Err(e) => store.report(e),
             }
         });

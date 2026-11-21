@@ -58,10 +58,19 @@ export function debugEchoLatency(agent, token) {
   });
 }
 
+const DEFAULT_MONO = '"Cascadia Mono", Consolas, "DejaVu Sans Mono", monospace';
+
+/** Tipografía de la terminal desde las variables CSS `--mono` y `--mono-size` (configuración). */
+function monoFont() {
+  const style = getComputedStyle(document.documentElement);
+  const family = style.getPropertyValue('--mono').trim() || DEFAULT_MONO;
+  const size = parseInt(style.getPropertyValue('--mono-size'), 10) || 13;
+  return { fontFamily: family, fontSize: size };
+}
+
 export function createTerminal(el, onData, onResize) {
   const term = new Terminal({
-    fontFamily: '"Cascadia Mono", Consolas, "DejaVu Sans Mono", monospace',
-    fontSize: 13,
+    ...monoFont(),
     cursorBlink: true,
     scrollback: 10000,
     theme: { background: '#15171c', foreground: '#d7dae0' },
@@ -91,6 +100,15 @@ export function createTerminal(el, onData, onResize) {
   };
   const observer = new ResizeObserver(refit);
   observer.observe(el);
+
+  // La configuración cambió la tipografía (ui/src/bridge/prefs.rs).
+  const onFonts = () => {
+    const { fontFamily, fontSize } = monoFont();
+    term.options.fontFamily = fontFamily;
+    term.options.fontSize = fontSize;
+    refit();
+  };
+  window.addEventListener('gryphus:fonts', onFonts);
 
   const handle = (message) => {
     const msg = decode(message);
@@ -136,6 +154,7 @@ export function createTerminal(el, onData, onResize) {
       term.write(text);
     },
     dispose() {
+      window.removeEventListener('gryphus:fonts', onFonts);
       observer.disconnect();
       term.dispose();
     },

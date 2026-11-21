@@ -3,13 +3,17 @@
 
 use std::collections::HashSet;
 
+use futures_channel::oneshot;
+
 use gryphus_ipc::{FileStatusDto, GitOverviewDto, IpcError, ProjectDto};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 
+use crate::bridge::prefs;
 use crate::ipc;
 use crate::layout::CenterView;
 use crate::logic;
+use crate::settings::{Settings, STORAGE_KEY};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenFile {
@@ -17,8 +21,15 @@ pub struct OpenFile {
     pub path: String,
 }
 
+/// Confirmación pendiente (modal `app::ConfirmDialog`).
+pub struct ConfirmRequest {
+    pub message: String,
+    tx: oneshot::Sender<bool>,
+}
+
 #[derive(Clone, Copy)]
 pub struct Store {
+    pub confirm: RwSignal<Option<ConfirmRequest>>,
     pub loaded: RwSignal<bool>,
     pub project: RwSignal<Option<ProjectDto>>,
     pub selected_feature: RwSignal<Option<u64>>,
@@ -37,11 +48,16 @@ pub struct Store {
     /// Directorios expandidos en el explorador: (worktree, ruta). Vive aquí y no en
     /// cada fila para sobrevivir a las recargas por cambios en disco.
     pub expanded: RwSignal<HashSet<(u64, String)>>,
+    /// Las tablas de iconos ya se cargaron (el explorador se repinta al cambiar).
+    pub icons_ready: RwSignal<bool>,
+    pub settings: RwSignal<Settings>,
+    pub settings_open: RwSignal<bool>,
 }
 
 impl Store {
     pub fn new() -> Self {
         Self {
+            confirm: RwSignal::new(None),
             loaded: RwSignal::new(false),
             project: RwSignal::new(None),
             selected_feature: RwSignal::new(None),
@@ -56,7 +72,87 @@ impl Store {
             git_tick: RwSignal::new(0),
             error: RwSignal::new(None),
             expanded: RwSignal::new(HashSet::new()),
+            icons_ready: RwSignal::new(false),
+            settings: RwSignal::new(Settings::default()),
+            settings_open: RwSignal::new(false),
         }
+    }
+
+    /// Pide confirmación con el modal de la app. Una petición nueva cancela la anterior.
+    pub async fn ask(self, message: impl Into<String>) -> bool {
+        let message = message.into();
+        if let Some(answer) = crate::bridge::dialog::e2e_auto_confirm(&message) {
+            return answer;
+        }
+        let (tx, rx) = oneshot::channel();
+        self.confirm.set(Some(ConfirmRequest { message, tx }));
+        rx.await.unwrap_or(false)
+    }
+
+    /// Responde la confirmación pendiente y cierra el modal.
+    pub fn answer(&self, accepted: bool) {
+        if let Some(req) = self.confirm.try_update(Option::take).flatten() {
+            let _ = req.tx.send(accepted);
+        }
+    }
+
+    /// Carga las preferencias guardadas y las aplica.
+    pub fn load_settings(&self) {
+        let s = prefs::load(STORAGE_KEY)
+            .map(|t| Settings::parse(&t))
+            .unwrap_or_default();
+        prefs::apply_css_vars(s.css_vars());
+        self.settings.set(s);
+    }
+
+    /// Aplica y guarda nuevas preferencias.
+    pub fn set_settings(&self, s: Settings) {
+        prefs::apply_css_vars(s.css_vars());
+        prefs::save(STORAGE_KEY, &s.serialize());
+        self.settings.set(s);
+    }
+
+    /// Abre un repositorio: en esta ventana si está vacía; si no, en otra (un proyecto por ventana).
+    pub fn open_project(self, path: String) {
+        if path.trim().is_empty() {
+            return;
+        }
+        spawn_local(async move {
+            match ipc::open_project(path).await {
+                Ok(res) if !res.other_window => self.refresh_project(),
+                Ok(_) => {}
+                Err(e) => self.report(e),
+            }
+        });
+    }
+
+    /// Diálogo nativo de carpeta y luego [`Self::open_project`].
+    pub fn pick_and_open(self) {
+        spawn_local(async move {
+            match ipc::pick_folder().await {
+                Ok(Some(folder)) => self.open_project(folder),
+                Ok(None) => {}
+                Err(e) => self.report(e),
+            }
+        });
+    }
+
+    /// Cierra el proyecto de la ventana y vuelve a la bienvenida.
+    pub fn close_project(self) {
+        spawn_local(async move {
+            if let Err(e) = ipc::close_project().await {
+                self.report(e);
+            }
+            self.selected_agent.set(None);
+            self.selected_feature.set(None);
+            self.active_worktree.set(None);
+            self.open_file.set(None);
+            self.status.set(Vec::new());
+            self.overview.set(None);
+            self.expanded.set(HashSet::new());
+            self.view.set(CenterView::Agent);
+            self.refresh_project();
+        });
     }
 
     pub fn is_expanded(&self, worktree: u64, path: &str) -> bool {

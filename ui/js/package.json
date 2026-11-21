@@ -5,7 +5,8 @@
   "description": "Pegamento JS mínimo de la UI: xterm.js y CodeMirror 6. Se empaqueta en ui/vendor/ (versionado) para que compilar la app no requiera Node.",
   "scripts": {
     "build": "esbuild src/index.js --bundle --minify --format=iife --global-name=GryphusJs --target=es2022 --outfile=../vendor/gryphus-js.js",
-    "test": "node --test test/stream.test.mjs"
+    "test": "node --test test/stream.test.mjs",
+    "icons": "node scripts/icons.mjs"
   },
   "dependencies": {
     "@codemirror/lang-css": "^6.3.1",
@@ -24,6 +25,7 @@
     "codemirror": "^6.0.1"
   },
   "devDependencies": {
-    "esbuild": "^0.25.0"
+    "esbuild": "^0.25.0",
+    "material-icon-theme": "^5.40.0"
   }
 }

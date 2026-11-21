@@ -17,6 +17,8 @@ pub mod cmd {
     pub const PICK_FOLDER: &str = "pick_folder";
     pub const OPEN_PROJECT: &str = "open_project";
     pub const GET_PROJECT: &str = "get_project";
+    /// Cierra el proyecto de la ventana (detiene sus agentes y guarda); la ventana vuelve a la bienvenida.
+    pub const CLOSE_PROJECT: &str = "close_project";
     pub const CREATE_FEATURE: &str = "create_feature";
     pub const DELETE_FEATURE: &str = "delete_feature";
     pub const SPAWN_AGENT: &str = "spawn_agent";
@@ -377,6 +379,7 @@ mod tests {
             cmd::PICK_FOLDER,
             cmd::OPEN_PROJECT,
             cmd::GET_PROJECT,
+            cmd::CLOSE_PROJECT,
             cmd::CREATE_FEATURE,
             cmd::DELETE_FEATURE,
             cmd::SPAWN_AGENT,

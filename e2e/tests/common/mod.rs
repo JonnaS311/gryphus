@@ -306,10 +306,10 @@ impl App {
         .await;
     }
 
-    /// Las confirmaciones nativas se aceptan automáticamente (y se registran).
+    /// Las confirmaciones (modal de la UI) se aceptan automáticamente y se registran.
     pub async fn auto_confirm(&self) {
         self.script(
-            "window.__confirms = []; window.confirm = (m) => { window.__confirms.push(m); return true; }; return null;",
+            "window.__confirms = []; window.__gryphusAutoConfirm = true; return null;",
             vec![],
         )
         .await;

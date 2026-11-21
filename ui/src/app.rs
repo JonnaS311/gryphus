@@ -7,7 +7,7 @@ use leptos::task::spawn_local;
 use crate::bridge::tauri::listen;
 use crate::ipc;
 use crate::layout::CenterView;
-use crate::panels::{AgentsPanel, Explorer, StatusBar};
+use crate::panels::{AgentsPanel, Explorer, Navbar, StatusBar};
 use crate::store::Store;
 use crate::views::{MainView, Welcome};
 
@@ -15,10 +15,14 @@ use crate::views::{MainView, Welcome};
 pub fn App() -> impl IntoView {
     let store = Store::new();
     provide_context(store);
+    store.load_settings();
     crate::bridge::perf::mark("ui-ready");
-    spawn_local(async {
+    spawn_local(async move {
         let _ = ipc::ui_ready().await;
-        // Precarga xterm/CodeMirror fuera del camino crítico del arranque.
+        // Tablas de iconos y xterm/CodeMirror, fuera del camino crítico del arranque.
+        if crate::bridge::icons::load().await.is_ok() {
+            store.icons_ready.set(true);
+        }
         let _ = crate::bridge::glue::ensure_loaded().await;
     });
     store.refresh_project();
@@ -39,17 +43,23 @@ pub fn App() -> impl IntoView {
     });
 
     view! {
-        <Show
-            when=move || store.loaded.get()
-            fallback=|| view! { <div class="loading">"Cargando…"</div> }
-        >
-            <Show
-                when=move || store.project.with(Option::is_some)
-                fallback=|| view! { <Welcome/> }
-            >
-                <Workspace/>
-            </Show>
-        </Show>
+        <div class="app">
+            <Navbar/>
+            <main class="app-body">
+                <Show
+                    when=move || store.loaded.get()
+                    fallback=|| view! { <div class="loading">"Cargando…"</div> }
+                >
+                    <Show
+                        when=move || store.project.with(Option::is_some)
+                        fallback=|| view! { <Welcome/> }
+                    >
+                        <Workspace/>
+                    </Show>
+                </Show>
+            </main>
+        </div>
+        <ConfirmDialog/>
         <ErrorToast/>
     }
 }
@@ -111,6 +121,50 @@ fn Workspace() -> impl IntoView {
             <Explorer/>
             <StatusBar/>
         </div>
+    }
+}
+
+/// Modal de confirmación con el tema de la app (ver `Store::ask`).
+#[component]
+fn ConfirmDialog() -> impl IntoView {
+    let store = expect_context::<Store>();
+    let _keys = window_event_listener(leptos::ev::keydown, move |ev| {
+        if store.confirm.with_untracked(|c| c.is_none()) {
+            return;
+        }
+        match ev.key().as_str() {
+            "Escape" => store.answer(false),
+            "Enter" => store.answer(true),
+            _ => return,
+        }
+        ev.prevent_default();
+        ev.stop_propagation();
+    });
+    move || {
+        store
+            .confirm
+            .with(|c| c.as_ref().map(|c| c.message.clone()))
+            .map(|message| {
+                view! {
+                    <div class="backdrop over" on:click=move |_| store.answer(false)></div>
+                    <section class="confirm" role="alertdialog" aria-modal="true">
+                        <p class="confirm-message">{message}</p>
+                        <div class="confirm-actions">
+                            <button id="confirm-cancel" on:click=move |_| store.answer(false)>
+                                "Cancelar"
+                            </button>
+                            <button
+                                id="confirm-accept"
+                                class="primary"
+                                autofocus=true
+                                on:click=move |_| store.answer(true)
+                            >
+                                "Aceptar"
+                            </button>
+                        </div>
+                    </section>
+                }
+            })
     }
 }
 

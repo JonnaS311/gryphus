@@ -4,6 +4,8 @@ use gryphus_ipc::{DirEntryDto, EntryKindDto, FileStateDto};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 
+use crate::bridge::icons as bridge_icons;
+use crate::icons;
 use crate::ipc;
 use crate::layout::CenterView;
 use crate::logic;
@@ -96,6 +98,8 @@ fn TreeEntry(worktree: u64, entry: DirEntryDto, parent: String, depth: usize) ->
             let (open_key, chev_key) = (full.clone(), full.clone());
             let open = move || store.is_expanded(worktree, &open_key);
             let chev_open = move || store.is_expanded(worktree, &chev_key);
+            let icon_key = full.clone();
+            let icon_open = move || store.is_expanded(worktree, &icon_key);
             let toggle_key = full.clone();
             let changed_path = full.clone();
             let changed = move || store.status.with(|s| logic::dir_changed(s, &changed_path));
@@ -108,6 +112,17 @@ fn TreeEntry(worktree: u64, entry: DirEntryDto, parent: String, depth: usize) ->
                         on:click=move |_| store.toggle_expanded(worktree, &toggle_key)
                     >
                         <span class="chev">{move || if chev_open() { "▾" } else { "▸" }}</span>
+                        <img
+                            class="ficon"
+                            alt=""
+                            src={
+                                let name = name.clone();
+                                move || {
+                                    store.icons_ready.track();
+                                    icons::url(&icons::folder_icon(&name, icon_open(), bridge_icons::get))
+                                }
+                            }
+                        />
                         <span class="name">{name}</span>
                         <Show when=changed>
                             <span class="mark modified">"•"</span>
@@ -157,6 +172,17 @@ fn TreeEntry(worktree: u64, entry: DirEntryDto, parent: String, depth: usize) ->
                         }
                     >
                         <span class="chev"></span>
+                        <img
+                            class="ficon"
+                            alt=""
+                            src={
+                                let name = name.clone();
+                                move || {
+                                    store.icons_ready.track();
+                                    icons::url(&icons::file_icon(&name, bridge_icons::get))
+                                }
+                            }
+                        />
                         <span class="name">{name}</span>
                         {move || {
                             mark()

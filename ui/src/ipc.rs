@@ -23,6 +23,10 @@ pub async fn get_project() -> IpcResult<Option<ProjectDto>> {
     call(cmd::GET_PROJECT).await
 }
 
+pub async fn close_project() -> IpcResult<()> {
+    call(cmd::CLOSE_PROJECT).await
+}
+
 pub async fn create_feature(name: String, worktree: WorktreeChoiceDto) -> IpcResult<u64> {
     invoke(
         cmd::CREATE_FEATURE,

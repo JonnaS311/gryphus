@@ -167,6 +167,19 @@ pub async fn get_project(
     }
 }
 
+/// Cierra el proyecto de esta ventana sin cerrarla: suelta la terminal, detiene
+/// los agentes y guarda. Idempotente.
+#[tauri::command]
+pub async fn close_project(window: WebviewWindow, state: State<'_, AppState>) -> CmdResult<()> {
+    state.detach(window.label());
+    let session = state.registry().remove(window.label());
+    let _ = window.set_title("Gryphus");
+    match session {
+        None => Ok(()),
+        Some(s) => blocking(move || s.close().map_err(dto::error)).await,
+    }
+}
+
 // ── Features ─────────────────────────────────────────────────────────────────
 
 #[tauri::command]
