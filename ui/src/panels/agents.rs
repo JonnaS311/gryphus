@@ -74,12 +74,18 @@ fn NewFeatureForm(open: WriteSignal<bool>) -> impl IntoView {
                 base: Some(base.get_untracked()),
             },
         };
+        let initial = store
+            .settings
+            .with_untracked(|s| s.initial_agent().map(str::to_owned));
         spawn_local(async move {
             match ipc::create_feature(name, worktree).await {
                 Ok(id) => {
                     open.set(false);
                     store.selected_feature.set(Some(id));
-                    store.refresh_project();
+                    match initial {
+                        Some(provider) => launch_initial_agent(store, id, provider).await,
+                        None => store.refresh_project(),
+                    }
                 }
                 Err(e) => store.report(e),
             }
@@ -118,6 +124,38 @@ fn NewFeatureForm(open: WriteSignal<bool>) -> impl IntoView {
                 <button type="button" on:click=move |_| open.set(false)>"Cancelar"</button>
             </div>
         </form>
+    }
+}
+
+/// Lanza el agente inicial de Configuración en el primer worktree de la feature recién creada.
+async fn launch_initial_agent(store: Store, feature: u64, provider: String) {
+    let project = match ipc::get_project().await {
+        Ok(Some(p)) => p,
+        Ok(None) => return store.refresh_project(),
+        Err(e) => {
+            store.report(e);
+            return store.refresh_project();
+        }
+    };
+    let worktree = logic::feature(&project, feature).and_then(|f| f.worktrees.first().copied());
+    let available = project
+        .providers
+        .iter()
+        .any(|p| p.id == provider && p.available);
+    let Some(worktree) = worktree else {
+        return store.refresh_project();
+    };
+    if !available {
+        store.error.set(Some(format!(
+            "El agente inicial «{provider}» no está instalado; la feature se creó sin agente."
+        )));
+        return store.refresh_project();
+    }
+    let result = ipc::spawn_agent(feature, worktree, provider).await;
+    store.refresh_project();
+    match result {
+        Ok(agent) => store.select_agent(agent, worktree, feature),
+        Err(e) => store.report(e),
     }
 }
 
