@@ -22,8 +22,10 @@ pub use store::StorePort;
 use std::fmt;
 
 /// Error de un adaptador. `kind` permite a la app decidir sin mirar el texto.
+/// Se muestra solo el mensaje: la UI ya añade el código estable (`CONFLICT`), y el
+/// prefijo `Conflict: ` duplicaba la información en cada aviso.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("{kind:?}: {message}")]
+#[error("{message}")]
 pub struct PortError {
     pub kind: PortErrorKind,
     pub message: String,
@@ -133,6 +135,6 @@ mod tests {
     fn port_error_exposes_code() {
         let err = PortError::new(PortErrorKind::Conflict, "cambios sin commit");
         assert_eq!(err.code(), "CONFLICT");
-        assert_eq!(err.to_string(), "Conflict: cambios sin commit");
+        assert_eq!(err.to_string(), "cambios sin commit");
     }
 }

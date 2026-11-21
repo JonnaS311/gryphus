@@ -27,6 +27,9 @@ pub fn DiffView() -> impl IntoView {
         })
     };
 
+    // Solo se aplica la respuesta de la petición más reciente: si no, un diff lento
+    // de otro worktree (o de la otra base) podía quedarse en pantalla.
+    let req = StoredValue::new(0u64);
     Effect::new(move |_| {
         store.git_tick.track();
         let visible = store.view.get() == CenterView::Diff;
@@ -35,10 +38,22 @@ pub fn DiffView() -> impl IntoView {
         let (true, Some(worktree)) = (visible, worktree) else {
             return;
         };
+        req.update_value(|n| *n += 1);
+        let mine = req.get_value();
         spawn_local(async move {
-            match ipc::git_diff(worktree, base).await {
-                Ok(d) => set_diff.set(Some(d)),
-                Err(e) => store.report(e),
+            let res = ipc::git_diff(worktree, base).await;
+            if req.try_get_value() != Some(mine) {
+                return;
+            }
+            match res {
+                Ok(d) => {
+                    let _ = set_diff.try_set(Some(d));
+                }
+                Err(e) => {
+                    // No dejar a la vista el diff anterior como si fuera de este worktree.
+                    let _ = set_diff.try_set(None);
+                    store.report(e);
+                }
             }
         });
     });

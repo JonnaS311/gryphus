@@ -8,7 +8,7 @@ use crate::bridge::tauri::listen;
 use crate::ipc;
 use crate::layout::CenterView;
 use crate::panels::{AgentsPanel, Explorer, Navbar, StatusBar};
-use crate::store::{Answer, ConfirmKind, Store};
+use crate::store::Store;
 use crate::views::{MainView, Welcome};
 
 #[component]
@@ -27,6 +27,35 @@ pub fn App() -> impl IntoView {
     });
     store.refresh_project();
     register_events(store);
+
+    // Guarda de cierre: con agentes activos o cambios sin guardar, la X de la
+    // ventana pregunta en vez de detenerlos/descartarlos en silencio.
+    Effect::new(move |prev: Option<bool>| {
+        let active = store.project.with(|p| {
+            p.as_ref()
+                .is_some_and(|p| p.agents.iter().any(|a| a.status.is_active()))
+        });
+        let guard = active || store.dirty_files.with(|d| !d.is_empty());
+        if prev != Some(guard) {
+            spawn_local(async move {
+                let _ = ipc::set_close_guard(guard).await;
+            });
+        }
+        guard
+    });
+    listen(event::CLOSE_REQUESTED, move |_: ()| {
+        spawn_local(async move {
+            let proceed = match store.close_warning() {
+                Some(warning) => store.ask(warning).await,
+                None => true,
+            };
+            if proceed {
+                if let Err(e) = ipc::confirm_close().await {
+                    store.report(e);
+                }
+            }
+        });
+    });
 
     let _keys = window_event_listener(leptos::ev::keydown, move |ev| {
         if !ev.ctrl_key() {
@@ -80,6 +109,10 @@ fn register_events(store: Store) {
                 agent.status = e.status;
             }
         });
+        // El evento puede llegar antes que el agente (recién lanzado) esté en la
+        // caché, o mientras un `get_project` anterior al cambio sigue en vuelo y lo
+        // pisaría al volver: se pide el estado de nuevo (los cambios de estado son raros).
+        store.refresh_project();
     });
     listen(event::FILES_CHANGED, move |e: FilesChangedEvent| {
         store.fs_change.set((e.worktree, e.paths));
@@ -97,19 +130,35 @@ fn Workspace() -> impl IntoView {
     let store = expect_context::<Store>();
 
     // Status y resumen git del worktree activo; se recargan con cada `git:changed`.
+    // Las respuestas pueden llegar desordenadas (ráfagas de eventos, cambio de
+    // worktree): solo se aplica la de la petición más reciente.
+    let req = StoredValue::new(0u64);
     Effect::new(move |_| {
         store.git_tick.track();
         let worktree = store.active_worktree.get();
+        req.update_value(|n| *n += 1);
+        let mine = req.get_value();
+        // `try_`: el espacio de trabajo pudo desmontarse (proyecto cerrado) mientras tanto.
+        let current = move || req.try_get_value() == Some(mine);
         spawn_local(async move {
             if let Some(wt) = worktree {
-                match ipc::git_status(wt).await {
+                let res = ipc::git_status(wt).await;
+                if !current() {
+                    return;
+                }
+                match res {
                     Ok(s) => store.status.set(s),
                     Err(e) if e.code == "WORKTREE_MISSING" => store.status.set(Vec::new()),
-                    Err(e) => store.report(e),
+                    Err(e) => {
+                        store.status.set(Vec::new());
+                        store.report(e);
+                    }
                 }
             }
             if let Ok(o) = ipc::git_overview().await {
-                store.overview.set(Some(o));
+                if current() {
+                    store.overview.set(Some(o));
+                }
             }
         });
     });
@@ -133,8 +182,8 @@ fn ConfirmDialog() -> impl IntoView {
             return;
         }
         match ev.key().as_str() {
-            "Escape" => store.answer(Answer::Cancel),
-            "Enter" => store.answer(Answer::Accept),
+            "Escape" => store.answer(None),
+            "Enter" => store.answer(Some(0)),
             _ => return,
         }
         ev.prevent_default();
@@ -143,33 +192,38 @@ fn ConfirmDialog() -> impl IntoView {
     move || {
         store
             .confirm
-            .with(|c| c.as_ref().map(|c| (c.message.clone(), c.kind)))
-            .map(|(message, kind)| {
-                let save = kind == ConfirmKind::SaveChanges;
+            .with(|c| c.as_ref().map(|c| (c.message.clone(), c.choices.clone())))
+            .map(|(message, choices)| {
                 view! {
-                    <div class="backdrop over" on:click=move |_| store.answer(Answer::Cancel)></div>
+                    <div class="backdrop over" on:click=move |_| store.answer(None)></div>
                     <section class="confirm" role="alertdialog" aria-modal="true">
                         <p class="confirm-message">{message}</p>
                         <div class="confirm-actions">
-                            <button id="confirm-cancel" on:click=move |_| store.answer(Answer::Cancel)>
+                            <button id="confirm-cancel" on:click=move |_| store.answer(None)>
                                 "Cancelar"
                             </button>
-                            <Show when=move || save>
-                                <button
-                                    id="confirm-discard"
-                                    on:click=move |_| store.answer(Answer::Discard)
-                                >
-                                    "No guardar"
-                                </button>
-                            </Show>
-                            <button
-                                id="confirm-accept"
-                                class="primary"
-                                autofocus=true
-                                on:click=move |_| store.answer(Answer::Accept)
-                            >
-                                {if save { "Guardar" } else { "Aceptar" }}
-                            </button>
+                            {choices
+                                .into_iter()
+                                .enumerate()
+                                .rev()
+                                .map(|(i, label)| {
+                                    let primary = i == 0;
+                                    view! {
+                                        <button
+                                            id=if primary {
+                                                "confirm-accept".to_owned()
+                                            } else {
+                                                format!("confirm-choice-{i}")
+                                            }
+                                            class:primary=primary
+                                            autofocus=primary
+                                            on:click=move |_| store.answer(Some(i))
+                                        >
+                                            {label}
+                                        </button>
+                                    }
+                                })
+                                .collect_view()}
                         </div>
                     </section>
                 }

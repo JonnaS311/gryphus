@@ -3,7 +3,9 @@
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 
-use crate::settings::{clamp_size, Settings, MONO_FONTS, SIZE_MAX, SIZE_MIN, UI_FONTS};
+use crate::settings::{
+    clamp_size, Settings, INITIAL_AGENTS, MONO_FONTS, SIZE_MAX, SIZE_MIN, UI_FONTS,
+};
 use crate::store::Store;
 
 #[component]
@@ -22,28 +24,12 @@ pub fn Navbar() -> impl IntoView {
     };
 
     let close = move |_| {
-        let active = store.project.with_untracked(|p| {
-            p.as_ref().map_or(0, |p| {
-                p.agents.iter().filter(|a| a.status.is_active()).count()
-            })
-        });
-        let unsaved = store.dirty_files.with_untracked(|d| d.len());
+        let warning = store.close_warning();
         spawn_local(async move {
-            if unsaved > 0
-                && !store.ask(format!(
-                    "Hay {unsaved} archivo(s) con cambios sin guardar que se perderán. ¿Cerrar el proyecto?"
-                ))
-                .await
-            {
-                return;
-            }
-            if active > 0
-                && !store.ask(format!(
-                    "Hay {active} agente(s) en ejecución. Cerrar el proyecto los detendrá. ¿Continuar?"
-                ))
-                .await
-            {
-                return;
+            if let Some(warning) = warning {
+                if !store.ask(warning).await {
+                    return;
+                }
             }
             store.close_project();
         });
@@ -188,6 +174,33 @@ fn SettingsDialog() -> impl IntoView {
                     prop:value=move || store.settings.with(|s| s.mono_size.to_string())
                     on:change=move |ev| size_input(event_target_value(&ev), |s, n| s.mono_size = n)
                 />
+            </label>
+
+            <h3>"Features"</h3>
+            <label>
+                "Agente inicial"
+                <select
+                    id="set-initial-agent"
+                    title="Agente que se lanza automáticamente al crear una feature"
+                    on:change=move |ev| {
+                        let v = event_target_value(&ev);
+                        edit(&|s| s.initial_agent = v.clone());
+                    }
+                >
+                    {INITIAL_AGENTS
+                        .iter()
+                        .map(|(id, label)| {
+                            view! {
+                                <option
+                                    value=*id
+                                    selected=move || store.settings.with(|s| s.initial_agent == *id)
+                                >
+                                    {*label}
+                                </option>
+                            }
+                        })
+                        .collect_view()}
+                </select>
             </label>
 
             <footer class="settings-footer">

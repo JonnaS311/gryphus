@@ -95,6 +95,23 @@ fn untracked_binary_files_are_marked_binary() {
     assert!(file.binary && file.hunks.is_empty());
 }
 
+/// Abrir un repo recién creado (`git init`, sin commits) no debe romper el diff.
+#[test]
+fn diff_in_a_repo_without_commits_shows_staged_and_untracked_files() {
+    let (repo, git) = setup();
+    let empty = repo.base().join("vacio");
+    std::fs::create_dir(&empty).unwrap();
+    repo.git(&empty, &["init", "-q"]);
+    std::fs::write(empty.join("indexado.txt"), "a\n").unwrap();
+    repo.git(&empty, &["add", "indexado.txt"]);
+    std::fs::write(empty.join("nuevo.txt"), "b\n").unwrap();
+
+    let diff = git.diff(&empty, &DiffBase::Head).unwrap();
+    let paths: Vec<_> = diff.files.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(paths, ["indexado.txt", "nuevo.txt"]);
+    assert_eq!(diff.files[0].hunks[0].lines, [DiffLine::Added("a".into())]);
+}
+
 #[test]
 fn merge_base_with_unknown_branch_is_not_found() {
     let (repo, git) = setup();

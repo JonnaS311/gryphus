@@ -37,12 +37,14 @@ pub fn AgentsPanel() -> impl IntoView {
             <Show when=move || features().is_empty() && !creating.get()>
                 <p class="hint">"Crea una feature con + para empezar."</p>
             </Show>
-            {move || {
-                features()
-                    .into_iter()
-                    .map(|feature| view! { <FeatureItem feature/> })
-                    .collect_view()
-            }}
+            // Con clave: cada refresco del proyecto (p. ej. un cambio de estado de un
+            // agente) recreaba todas las features y reiniciaba lo elegido en
+            // "Lanzar agente" (proveedor y worktree) mientras el usuario lo usaba.
+            <For
+                each=features
+                key=|f| (f.id, f.worktrees.clone())
+                children=|feature| view! { <FeatureItem feature/> }
+            />
         </aside>
     }
 }
@@ -74,12 +76,18 @@ fn NewFeatureForm(open: WriteSignal<bool>) -> impl IntoView {
                 base: Some(base.get_untracked()),
             },
         };
+        let initial = store
+            .settings
+            .with_untracked(|s| s.initial_agent().map(str::to_owned));
         spawn_local(async move {
             match ipc::create_feature(name, worktree).await {
                 Ok(id) => {
                     open.set(false);
                     store.selected_feature.set(Some(id));
-                    store.refresh_project();
+                    match initial {
+                        Some(provider) => launch_initial_agent(store, id, provider).await,
+                        None => store.refresh_project(),
+                    }
                 }
                 Err(e) => store.report(e),
             }
@@ -121,14 +129,56 @@ fn NewFeatureForm(open: WriteSignal<bool>) -> impl IntoView {
     }
 }
 
+/// Lanza el agente inicial de Configuración en el primer worktree de la feature recién creada.
+async fn launch_initial_agent(store: Store, feature: u64, provider: String) {
+    let project = match ipc::get_project().await {
+        Ok(Some(p)) => p,
+        Ok(None) => return store.refresh_project(),
+        Err(e) => {
+            store.report(e);
+            return store.refresh_project();
+        }
+    };
+    let worktree = logic::feature(&project, feature).and_then(|f| f.worktrees.first().copied());
+    let available = project
+        .providers
+        .iter()
+        .any(|p| p.id == provider && p.available);
+    let Some(worktree) = worktree else {
+        return store.refresh_project();
+    };
+    if !available {
+        store.error.set(Some(format!(
+            "El agente inicial «{provider}» no está instalado; la feature se creó sin agente."
+        )));
+        return store.refresh_project();
+    }
+    let result = ipc::spawn_agent(feature, worktree, provider).await;
+    store.refresh_project();
+    match result {
+        Ok(agent) => store.select_agent(agent, worktree, feature),
+        Err(e) => store.report(e),
+    }
+}
+
 fn delete_feature(store: Store, id: u64) {
     spawn_local(async move {
-        if !store.ask("¿Eliminar esta feature?").await {
-            return;
-        }
-        let remove = store
-            .ask("¿Eliminar también sus worktrees del disco? (las branches se conservan)")
-            .await;
+        // Una sola pregunta con tres salidas: antes, "Cancelar" en la segunda
+        // pregunta (worktrees) no abortaba, sino que borraba conservando worktrees.
+        let remove = match store
+            .choose(
+                "¿Eliminar esta feature? Las branches se conservan en git.",
+                [
+                    "Eliminar con sus worktrees",
+                    "Eliminar y conservar worktrees",
+                ],
+            )
+            .await
+        {
+            Some(0) => true,
+            Some(_) => false,
+            None => return,
+        };
         let mut result = ipc::delete_feature(id, remove, false).await;
         if matches!(&result, Err(e) if e.code == "CONFLICT")
             && store

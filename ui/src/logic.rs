@@ -100,10 +100,14 @@ pub fn tab_after_close(remaining: usize, closed: usize) -> Option<usize> {
 pub fn tab_hint<'a>(paths: impl IntoIterator<Item = &'a str>, path: &str) -> Option<String> {
     let split = |p: &'a str| p.rsplit_once('/').unwrap_or(("", p));
     let (dir, name) = path.rsplit_once('/').unwrap_or(("", path));
-    let duplicated = paths
-        .into_iter()
-        .any(|p| p != path && split(p).1 == name);
-    duplicated.then(|| if dir.is_empty() { "./".into() } else { dir.to_owned() })
+    let duplicated = paths.into_iter().any(|p| p != path && split(p).1 == name);
+    duplicated.then(|| {
+        if dir.is_empty() {
+            "./".into()
+        } else {
+            dir.to_owned()
+        }
+    })
 }
 
 /// `↑2 ↓1`, o vacío si está al día o no tiene upstream.
@@ -245,7 +249,11 @@ mod tests {
     #[test]
     fn closing_a_tab_activates_its_right_neighbour_or_the_last() {
         assert_eq!(tab_after_close(0, 0), None, "no quedan pestañas");
-        assert_eq!(tab_after_close(2, 0), Some(0), "la de la derecha ocupa su lugar");
+        assert_eq!(
+            tab_after_close(2, 0),
+            Some(0),
+            "la de la derecha ocupa su lugar"
+        );
         assert_eq!(tab_after_close(2, 1), Some(1));
         assert_eq!(tab_after_close(2, 2), Some(1), "era la última: la anterior");
     }

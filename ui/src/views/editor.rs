@@ -16,7 +16,7 @@ use crate::icons;
 use crate::ipc;
 use crate::layout::CenterView;
 use crate::logic;
-use crate::store::{Answer, OpenFile, Store};
+use crate::store::{OpenFile, SaveAnswer, Store};
 
 #[component]
 pub fn CodeEditor() -> impl IntoView {
@@ -28,9 +28,10 @@ pub fn CodeEditor() -> impl IntoView {
     let (saved_flash, set_saved_flash) = signal(false);
 
     let active_dirty = move || {
-        store
-            .open_file
-            .with(|f| f.as_ref().is_some_and(|f| store.dirty_files.with(|d| d.contains(f))))
+        store.open_file.with(|f| {
+            f.as_ref()
+                .is_some_and(|f| store.dirty_files.with(|d| d.contains(f)))
+        })
     };
     let notice = move || {
         store
@@ -56,9 +57,19 @@ pub fn CodeEditor() -> impl IntoView {
     let load = move |file: OpenFile| {
         spawn_local(async move {
             let result = ipc::read_file(file.worktree, file.path.clone()).await;
-            if !store.open_files.with_untracked(|t| t.contains(&file)) {
-                return; // se cerró mientras se leía
+            // Se cerró la pestaña (o el editor, al cerrar el proyecto) mientras se leía.
+            let still_open = store
+                .open_files
+                .try_with_untracked(|t| t.contains(&file))
+                .unwrap_or(false);
+            if !still_open || notices.is_disposed() {
+                return;
             }
+            let blocked = |msg: String| {
+                notices.update(|n| {
+                    n.insert(file.clone(), msg);
+                });
+            };
             match result {
                 Ok(FileContentDto::Text { text }) => {
                     notices.update(|n| {
@@ -70,19 +81,16 @@ pub fn CodeEditor() -> impl IntoView {
                         }
                     });
                 }
-                Ok(FileContentDto::Binary { size }) => notices.update(|n| {
-                    n.insert(
-                        file.clone(),
-                        format!("Archivo binario ({size} bytes): no se muestra en el editor."),
-                    );
-                }),
-                Ok(FileContentDto::TooLarge { size, limit }) => notices.update(|n| {
-                    n.insert(
-                        file.clone(),
-                        format!("Archivo demasiado grande ({size} bytes; límite {limit})."),
-                    );
-                }),
-                Err(e) => store.report(e),
+                Ok(FileContentDto::Binary { size }) => blocked(format!(
+                    "Archivo binario ({size} bytes): no se muestra en el editor."
+                )),
+                Ok(FileContentDto::TooLarge { size, limit }) => blocked(format!(
+                    "Archivo demasiado grande ({size} bytes; límite {limit})."
+                )),
+                Err(e) => {
+                    blocked(format!("No se pudo abrir {}: {}", file.path, e.message));
+                    store.report(e);
+                }
             }
             sync_view();
         });
@@ -109,8 +117,15 @@ pub fn CodeEditor() -> impl IntoView {
         }
     };
 
-    let save_active = move |text: String| {
-        if let Some(file) = store.open_file.get_untracked() {
+    // Guarda la pestaña activa con el texto de SU documento, no el de la vista: si aún
+    // carga, es binaria o no se pudo leer, no hay documento y no se escribe nada (el
+    // texto de un archivo nunca debe acabar en la ruta de otro).
+    let save_active = move || {
+        let Some(file) = store.open_file.get_untracked() else {
+            return;
+        };
+        let text = editor.with_value(|e| e.as_ref().and_then(|e| e.text(&file.key())));
+        if let Some(text) = text {
             spawn_local(async move {
                 write(file, text).await;
             });
@@ -129,11 +144,11 @@ pub fn CodeEditor() -> impl IntoView {
                     ))
                     .await;
                 match answer {
-                    Answer::Cancel => return,
-                    Answer::Discard => {}
-                    Answer::Accept => {
-                        let text = editor
-                            .with_value(|e| e.as_ref().and_then(|e| e.text(&file.key())));
+                    SaveAnswer::Cancel => return,
+                    SaveAnswer::Discard => {}
+                    SaveAnswer::Save => {
+                        let text =
+                            editor.with_value(|e| e.as_ref().and_then(|e| e.text(&file.key())));
                         let Some(text) = text else { return };
                         if !write(file.clone(), text).await {
                             return;
@@ -151,9 +166,9 @@ pub fn CodeEditor() -> impl IntoView {
                 t.remove(idx);
             });
             if store.open_file.get_untracked().as_ref() == Some(&file) {
-                let next = store.open_files.with_untracked(|t| {
-                    logic::tab_after_close(t.len(), idx).map(|i| t[i].clone())
-                });
+                let next = store
+                    .open_files
+                    .with_untracked(|t| logic::tab_after_close(t.len(), idx).map(|i| t[i].clone()));
                 store.open_file.set(next);
             }
         });
@@ -186,22 +201,26 @@ pub fn CodeEditor() -> impl IntoView {
         }
         creating.set_value(true);
         spawn_local(async move {
-            let created = Editor::create(&div, save_active, move |key: String, dirty: bool| {
-                let file = store
-                    .open_files
-                    .with_untracked(|t| t.iter().find(|f| f.key() == key).cloned());
-                let Some(file) = file else { return };
-                if dirty && store.open_file.get_untracked().as_ref() == Some(&file) {
-                    set_saved_flash.set(false);
-                }
-                store.dirty_files.update(|d| {
-                    if dirty {
-                        d.insert(file);
-                    } else {
-                        d.remove(&file);
+            let created = Editor::create(
+                &div,
+                move |_| save_active(),
+                move |key: String, dirty: bool| {
+                    let file = store
+                        .open_files
+                        .with_untracked(|t| t.iter().find(|f| f.key() == key).cloned());
+                    let Some(file) = file else { return };
+                    if dirty && store.open_file.get_untracked().as_ref() == Some(&file) {
+                        set_saved_flash.set(false);
                     }
-                });
-            })
+                    store.dirty_files.update(|d| {
+                        if dirty {
+                            d.insert(file);
+                        } else {
+                            d.remove(&file);
+                        }
+                    });
+                },
+            )
             .await;
             match created {
                 Ok(e) => {
@@ -231,7 +250,10 @@ pub fn CodeEditor() -> impl IntoView {
             None => {} // el editor aún se está creando: lo carga al terminar
             Some(true) => sync_view(),
             Some(false) if notices.with_untracked(|n| n.contains_key(&file)) => sync_view(),
-            Some(false) => load(file),
+            Some(false) => {
+                sync_view(); // vista vacía mientras carga: no se ve ni se edita el anterior
+                load(file);
+            }
         }
     });
 
@@ -274,7 +296,8 @@ pub fn CodeEditor() -> impl IntoView {
                 else {
                     return;
                 };
-                if store.dirty_files.with_untracked(|d| d.contains(&file)) {
+                if notices.is_disposed() || store.dirty_files.with_untracked(|d| d.contains(&file))
+                {
                     return;
                 }
                 editor.with_value(|e| {
@@ -313,14 +336,7 @@ pub fn CodeEditor() -> impl IntoView {
         })
     });
 
-    let save_click = move |_| {
-        let Some(file) = store.open_file.get_untracked() else {
-            return;
-        };
-        if let Some(text) = editor.with_value(|e| e.as_ref().and_then(|e| e.text(&file.key()))) {
-            save_active(text);
-        }
-    };
+    let save_click = move |_| save_active();
 
     view! {
         <Show when=move || store.open_files.with(|t| !t.is_empty())>

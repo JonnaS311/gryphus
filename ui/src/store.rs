@@ -32,28 +32,20 @@ impl OpenFile {
     }
 }
 
-/// Qué botones muestra el modal de confirmación.
+/// Respuesta de [`Store::ask_save`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConfirmKind {
-    /// Cancelar / Aceptar.
-    Accept,
-    /// Cancelar / No guardar / Guardar.
-    SaveChanges,
-}
-
-/// Respuesta del modal. En [`ConfirmKind::Accept`] solo hay `Accept` o `Cancel`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Answer {
-    Accept,
+pub enum SaveAnswer {
+    Save,
     Discard,
     Cancel,
 }
 
-/// Confirmación pendiente (modal `app::ConfirmDialog`).
+/// Confirmación pendiente (modal `app::ConfirmDialog`): "Cancelar" más una o
+/// varias opciones; la primera es la principal (Enter).
 pub struct ConfirmRequest {
     pub message: String,
-    pub kind: ConfirmKind,
-    tx: oneshot::Sender<Answer>,
+    pub choices: Vec<String>,
+    tx: oneshot::Sender<Option<usize>>,
 }
 
 #[derive(Clone, Copy)]
@@ -86,6 +78,9 @@ pub struct Store {
     pub icons_ready: RwSignal<bool>,
     pub settings: RwSignal<Settings>,
     pub settings_open: RwSignal<bool>,
+    /// Número de la última petición de `get_project`: una respuesta más antigua que
+    /// llega tarde no debe pisar el estado nuevo.
+    project_req: StoredValue<u64>,
 }
 
 impl Store {
@@ -111,32 +106,47 @@ impl Store {
             icons_ready: RwSignal::new(false),
             settings: RwSignal::new(Settings::default()),
             settings_open: RwSignal::new(false),
+            project_req: StoredValue::new(0),
         }
     }
 
     /// Pide confirmación con el modal de la app. Una petición nueva cancela la anterior.
     pub async fn ask(self, message: impl Into<String>) -> bool {
-        self.prompt(message.into(), ConfirmKind::Accept).await == Answer::Accept
+        self.choose(message, ["Aceptar"]).await == Some(0)
     }
 
-    /// Pregunta si guardar los cambios: Guardar (`Accept`), No guardar (`Discard`) o `Cancel`.
-    pub async fn ask_save(self, message: impl Into<String>) -> Answer {
-        self.prompt(message.into(), ConfirmKind::SaveChanges).await
+    /// Cancelar / No guardar / Guardar (principal), como VS Code al cerrar un archivo.
+    pub async fn ask_save(self, message: impl Into<String>) -> SaveAnswer {
+        match self.choose(message, ["Guardar", "No guardar"]).await {
+            Some(0) => SaveAnswer::Save,
+            Some(_) => SaveAnswer::Discard,
+            None => SaveAnswer::Cancel,
+        }
     }
 
-    async fn prompt(self, message: String, kind: ConfirmKind) -> Answer {
-        if let Some(accepted) = crate::bridge::dialog::e2e_auto_confirm(&message) {
-            return if accepted { Answer::Accept } else { Answer::Cancel };
+    /// Pide elegir entre varias opciones. `None` = cancelado (botón, Esc o fondo).
+    pub async fn choose<const N: usize>(
+        self,
+        message: impl Into<String>,
+        choices: [&str; N],
+    ) -> Option<usize> {
+        let message = message.into();
+        if let Some(answer) = crate::bridge::dialog::e2e_auto_confirm(&message) {
+            return answer.then_some(0);
         }
         let (tx, rx) = oneshot::channel();
-        self.confirm.set(Some(ConfirmRequest { message, kind, tx }));
-        rx.await.unwrap_or(Answer::Cancel)
+        self.confirm.set(Some(ConfirmRequest {
+            message,
+            choices: choices.iter().map(|c| (*c).to_owned()).collect(),
+            tx,
+        }));
+        rx.await.ok().flatten()
     }
 
     /// Responde la confirmación pendiente y cierra el modal.
-    pub fn answer(&self, answer: Answer) {
+    pub fn answer(&self, choice: Option<usize>) {
         if let Some(req) = self.confirm.try_update(Option::take).flatten() {
-            let _ = req.tx.send(answer);
+            let _ = req.tx.send(choice);
         }
     }
 
@@ -201,6 +211,26 @@ impl Store {
         });
     }
 
+    /// Qué se perdería al cerrar (agentes activos, cambios sin guardar), o `None`.
+    pub fn close_warning(&self) -> Option<String> {
+        let active = self.project.with_untracked(|p| {
+            p.as_ref().map_or(0, |p| {
+                p.agents.iter().filter(|a| a.status.is_active()).count()
+            })
+        });
+        let mut parts = Vec::new();
+        if active > 0 {
+            parts.push(format!("se detendrán {active} agente(s) en ejecución"));
+        }
+        let unsaved = self.dirty_files.with_untracked(HashSet::len);
+        if unsaved > 0 {
+            parts.push(format!(
+                "se perderán los cambios sin guardar de {unsaved} archivo(s)"
+            ));
+        }
+        (!parts.is_empty()).then(|| format!("Al cerrar, {}. ¿Continuar?", parts.join(" y ")))
+    }
+
     pub fn is_expanded(&self, worktree: u64, path: &str) -> bool {
         self.expanded
             .with(|set| set.contains(&(worktree, path.to_owned())))
@@ -225,8 +255,14 @@ impl Store {
 
     /// Vuelve a pedir el proyecto y corrige la selección si algo desapareció.
     pub fn refresh_project(self) {
+        self.project_req.update_value(|n| *n += 1);
+        let req = self.project_req.get_value();
         spawn_local(async move {
-            match ipc::get_project().await {
+            let res = ipc::get_project().await;
+            if self.project_req.get_value() != req {
+                return; // ya hay una petición más reciente en curso
+            }
+            match res {
                 Ok(project) => {
                     self.project.set(project);
                     self.loaded.set(true);

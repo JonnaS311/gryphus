@@ -111,6 +111,50 @@ fn watcher_collapses_git_internals_into_dot_git() {
     );
 }
 
+/// Lo ignorado por `.gitignore` llega aparte (no altera el estado git), incluidos
+/// los patrones anidados y las excepciones `!`.
+#[test]
+fn watcher_reports_gitignored_paths_separately() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join(".gitignore"), "target/\n*.log\n!keep.log\n").unwrap();
+    std::fs::create_dir_all(root.join("target/debug")).unwrap();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::create_dir_all(root.join("sub")).unwrap();
+    std::fs::write(root.join("sub/.gitignore"), "local.txt\n").unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+
+    let sink = Arc::new(CollectingFsSink::default());
+    let _sub = LocalFs::new().watch(root, sink.clone()).unwrap();
+    std::fs::write(root.join("target/debug/app.exe"), "x").unwrap();
+    std::fs::write(root.join("a.log"), "x").unwrap();
+    std::fs::write(root.join("keep.log"), "x").unwrap();
+    std::fs::write(root.join("sub/local.txt"), "x").unwrap();
+    std::fs::write(root.join("src/main.rs"), "x").unwrap();
+    assert!(wait_until(Duration::from_secs(3), || {
+        sink.contains("src/main.rs") && sink.contains("sub/local.txt") && sink.contains("keep.log")
+    }));
+    std::thread::sleep(Duration::from_millis(300));
+
+    let ignored: Vec<_> = sink
+        .ignored()
+        .iter()
+        .map(|p| p.as_str().to_owned())
+        .collect();
+    for path in ["target/debug/app.exe", "a.log", "sub/local.txt"] {
+        assert!(
+            ignored.iter().any(|p| p == path),
+            "{path} ignorado: {ignored:?}"
+        );
+    }
+    for path in ["src/main.rs", "keep.log"] {
+        assert!(
+            !ignored.iter().any(|p| p == path),
+            "{path} no ignorado: {ignored:?}"
+        );
+    }
+}
+
 #[test]
 fn watching_a_missing_directory_is_not_found() {
     let dir = tempfile::tempdir().unwrap();
