@@ -1,4 +1,4 @@
-# Gryphus
+﻿# Gryphus
 
 [![CI](https://github.com/JonnaS311/gryphus/actions/workflows/ci.yml/badge.svg)](https://github.com/JonnaS311/gryphus/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/JonnaS311/gryphus?include_prereleases&sort=semver)](https://github.com/JonnaS311/gryphus/releases)
@@ -6,7 +6,7 @@
 ![Rust](https://img.shields.io/badge/Rust-stable-orange?logo=rust)
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri)
 ![Leptos](https://img.shields.io/badge/Leptos-0.8-EF3939)
-![Plataformas](https://img.shields.io/badge/plataformas-Windows%20%7C%20Linux-lightgrey)
+![Plataformas](https://img.shields.io/badge/plataformas-Windows%20%7C%20Linux%20(experimental)-lightgrey)
 
 Entorno de desarrollo de agentes de código (opencode, Claude Code, Codex). Simple y eficiente.
 
@@ -27,6 +27,8 @@ Los instaladores están en [Releases](https://github.com/JonnaS311/gryphus/relea
 | Linux (x64) | `.AppImage`, `.deb` o `.rpm` |
 
 > Proyecto en versión 0.x: los releases se publican como *pre-release*. Los binarios no están firmados, así que Windows SmartScreen puede pedir confirmación.
+>
+> **Linux es experimental:** compila y pasa las pruebas unitarias y de integración, pero los flujos E2E de la interfaz aún no están validados ahí ([seguimiento](https://github.com/JonnaS311/gryphus/issues/6)).
 
 ## Con qué está construido
 
@@ -40,7 +42,7 @@ Los instaladores están en [Releases](https://github.com/JonnaS311/gryphus/relea
 | Git | CLI de `git` ([ADR-005](docs/decisions.md)) |
 | Archivos | [notify](https://crates.io/crates/notify) (watcher) e [ignore](https://crates.io/crates/ignore) (`.gitignore`) |
 | Pruebas | `cargo test`, [proptest](https://crates.io/crates/proptest), [criterion](https://crates.io/crates/criterion) y E2E con WebDriver ([fantoccini](https://crates.io/crates/fantoccini) + `tauri-driver`) |
-| CI/CD | GitHub Actions: fmt, clippy, pruebas y E2E en Windows y Linux; instaladores con [tauri-action](https://github.com/tauri-apps/tauri-action) |
+| CI/CD | GitHub Actions: fmt, clippy y pruebas en Windows y Linux (E2E informativo); instaladores con [tauri-action](https://github.com/tauri-apps/tauri-action) |
 
 Arquitectura hexagonal: el dominio (`gryphus-core`) define puertos (traits) y los adaptadores (git, fs, agentes, store) los implementan. `arch-guard` verifica en las pruebas la regla de dependencias entre crates. Detalle en [docs/architecture/overview.md](docs/architecture/overview.md).
 
