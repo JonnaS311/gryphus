@@ -15,7 +15,7 @@ Todo el desarrollo es **orientado a pruebas (TDD)**: primero la prueba que falla
 | Pegamento JS | `ui/js/test` | Decodificador del formato binario de salida | `node --test` | ms |
 | E2E | `e2e/` | App real (WebView) completa, flujos de usuario | Rust + `fantoccini` + `tauri-driver` | s |
 
-Estado actual: **266 pruebas** en `cargo test --workspace`, todas en verde. Incluyen las e2e (6 flujos más las de rendimiento), que sin `GRYPHUS_E2E=1` se cuentan pero no hacen nada. Aparte hay 4 pruebas de JS. Las pruebas de componentes con `wasm-bindgen-test` previstas al inicio se sustituyeron por e2e contra la app real (ver [ui.md](architecture/ui.md#pruebas)).
+Estado actual: **279 pruebas** en `cargo test --workspace`, todas en verde. Incluyen las e2e (6 flujos más las de rendimiento), que sin `GRYPHUS_E2E=1` se cuentan pero no hacen nada. Aparte hay 4 pruebas de JS. Las pruebas de componentes con `wasm-bindgen-test` previstas al inicio se sustituyeron por e2e contra la app real (ver [ui.md](architecture/ui.md#pruebas)).
 
 ## Pruebas de contrato
 
@@ -100,7 +100,7 @@ Corren contra el binario real con config que apunta los tres proveedores a `fake
 10. Configuración → agente inicial: crear una feature lanza ese agente; con `Ninguno` no se lanza.
 11. Clic en la cabecera de una feature la contrae y expande; cada feature tiene un color distinto.
 12. Clic derecho en un agente → renombrar; los agentes nacen con un nombre (no `proveedor #id`).
-13. Explorador con clic derecho: renombrar (Escape cancela; una carpeta renombrada sigue expandida y el editor sigue su archivo), copiar y pegar (`nombre copia.ext` si choca; dentro de una carpeta).
+13. Explorador con clic derecho: renombrar (Escape cancela; una carpeta renombrada sigue expandida y su pestaña del editor pasa a la ruta nueva; con cambios sin guardar no se renombra), copiar y pegar (`nombre copia.ext` si choca; dentro de una carpeta).
 
 Los 9 flujos se cubren con 3 pruebas en `e2e/tests/flows.rs`: `open_project_once_per_window` (1-2), `feature_agent_editor_and_diff` (3-8) y `state_persists_across_restarts` (9). **Estado: pasan en Windows 11 (WebView2 158) en ~16 s.**
 
