@@ -355,6 +355,22 @@ impl App {
             .unwrap();
     }
 
+    /// Como `wait_text`, pero con el `textContent` del DOM. El texto "renderizado"
+    /// de WebDriver varía entre motores (WebKitGTK devuelve vacío en algunos
+    /// elementos con `overflow: hidden`).
+    pub async fn wait_dom_text(&self, css: &str, needle: &str) {
+        wait_for(&format!("{needle:?} en {css} (DOM)"), || async {
+            self.script(
+                "const e = document.querySelector(arguments[0]); return e ? e.textContent : '';",
+                vec![json!(css)],
+            )
+            .await
+            .as_str()
+            .is_some_and(|t| t.contains(needle))
+        })
+        .await;
+    }
+
     pub async fn script(&self, js: &str, args: Vec<Value>) -> Value {
         self.client.execute(js, args).await.expect("script")
     }

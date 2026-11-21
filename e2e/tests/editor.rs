@@ -136,9 +136,9 @@ async fn editor_tabs_switch_and_close_with_save_prompt() {
     assert_eq!(tabs, json!(["a.txt", "b.txt", "docs/a.txt"]));
 
     // Dos `a.txt`: cada pestaña muestra su carpeta; `b.txt` no.
-    app.wait_text(&format!("{} .editor-tab-hint", tab("docs/a.txt")), "docs")
+    app.wait_dom_text(&format!("{} .editor-tab-hint", tab("docs/a.txt")), "docs")
         .await;
-    app.wait_text(&format!("{} .editor-tab-hint", tab("a.txt")), "./")
+    app.wait_dom_text(&format!("{} .editor-tab-hint", tab("a.txt")), "./")
         .await;
     assert!(
         !app.exists(&format!("{} .editor-tab-hint", tab("b.txt")))
