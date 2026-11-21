@@ -149,7 +149,17 @@ impl GitPort for CliGit {
 
     fn diff(&self, worktree: &Path, base: &DiffBase) -> PortResult<Diff> {
         let commit = match base {
-            DiffBase::Head => "HEAD".to_owned(),
+            // Repo recién creado (HEAD sin commits): `git diff HEAD` fallaría con
+            // "unknown revision"; se compara contra el árbol vacío.
+            DiffBase::Head => {
+                match self.try_read(worktree, ["rev-parse", "--verify", "--quiet", "HEAD"])? {
+                    Some(_) => "HEAD".to_owned(),
+                    None => self
+                        .read(worktree, ["hash-object", "-t", "tree", "--stdin"])?
+                        .trim()
+                        .to_owned(),
+                }
+            }
             DiffBase::MergeBase(branch) => self
                 .try_read(worktree, ["merge-base", "HEAD", branch.as_str()])?
                 .map(|sha| sha.trim().to_owned())

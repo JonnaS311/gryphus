@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use gryphus_core::ports::{
     AgentChunk, AgentExit, AgentRuntimePort, Branch, ChunkSink, Diff, DiffBase, DirEntry,
-    FileContent, FileStatus, FsPort, GitPort, NewWorktree, PortErrorKind, SpawnSpec, StorePort,
-    Subscription, TermSize,
+    FileContent, FileStatus, FsPort, GitPort, NewWorktree, PortError, PortErrorKind, SpawnSpec,
+    StorePort, Subscription, TermSize,
 };
 use gryphus_core::{
     AgentId, AgentStatus, BranchName, Config, DomainError, DomainEvent, EventSink, FeatureId,
@@ -49,6 +49,9 @@ pub(crate) struct Inner {
     ports: Ports,
     config: Config,
     project: Mutex<Project>,
+    /// Ordena los guardados: se toma antes que `project` y se suelta tras guardar,
+    /// así una instantánea antigua nunca se escribe después de una más reciente.
+    save: Mutex<()>,
     watches: Mutex<HashMap<WorktreeId, Subscription>>,
 }
 
@@ -90,6 +93,7 @@ impl ProjectSession {
             ports,
             config,
             project: Mutex::new(project),
+            save: Mutex::new(()),
             watches: Mutex::new(HashMap::new()),
         });
         inner.ensure_watches();
@@ -194,6 +198,19 @@ impl ProjectSession {
                 .collect()
         };
         if remove_worktrees {
+            // Sin `force`, comprueba TODOS antes de borrar ninguno: si el segundo
+            // tenía cambios, el primero ya estaba borrado y la feature quedaba a medias.
+            if !force {
+                for (_, path) in &to_remove {
+                    if !inner.ports.git.status(path)?.is_empty() {
+                        return Err(PortError::new(
+                            PortErrorKind::Conflict,
+                            format!("{} contains modified or untracked files", path.display()),
+                        )
+                        .into());
+                    }
+                }
+            }
             for (_, path) in &to_remove {
                 inner.ports.git.remove_worktree(&inner.root, path, force)?;
             }
@@ -250,6 +267,11 @@ impl ProjectSession {
     pub fn restart_agent(&self, agent: AgentId) -> AppResult<()> {
         self.inner
             .mutate(|p| p.set_agent_status(agent, AgentStatus::Starting))?;
+        // Sin este evento la UI seguía mostrando "terminado" hasta el siguiente cambio.
+        self.inner.publish(DomainEvent::AgentStatusChanged {
+            agent,
+            status: AgentStatus::Starting,
+        });
         self.inner.launch(agent)
     }
 
@@ -359,8 +381,7 @@ impl ProjectSession {
             let _ = self.inner.ports.agents.kill(agent);
         }
         lock(&self.inner.watches).clear();
-        let snapshot = self.project();
-        Ok(self.inner.ports.store.save_project(&snapshot)?)
+        self.inner.mutate(|_| Ok(()))
     }
 }
 
@@ -383,6 +404,7 @@ impl Inner {
 
     /// Aplica una mutación de dominio y persiste. El lock se suelta antes de guardar.
     fn mutate<T>(&self, f: impl FnOnce(&mut Project) -> Result<T, DomainError>) -> AppResult<T> {
+        let _save = lock(&self.save);
         let (value, snapshot) = {
             let mut p = lock(&self.project);
             let value = f(&mut p)?;

@@ -80,6 +80,10 @@ fn register_events(store: Store) {
                 agent.status = e.status;
             }
         });
+        // El evento puede llegar antes que el agente (recién lanzado) esté en la
+        // caché, o mientras un `get_project` anterior al cambio sigue en vuelo y lo
+        // pisaría al volver: se pide el estado de nuevo (los cambios de estado son raros).
+        store.refresh_project();
     });
     listen(event::FILES_CHANGED, move |e: FilesChangedEvent| {
         store.fs_change.set((e.worktree, e.paths));
@@ -97,19 +101,35 @@ fn Workspace() -> impl IntoView {
     let store = expect_context::<Store>();
 
     // Status y resumen git del worktree activo; se recargan con cada `git:changed`.
+    // Las respuestas pueden llegar desordenadas (ráfagas de eventos, cambio de
+    // worktree): solo se aplica la de la petición más reciente.
+    let req = StoredValue::new(0u64);
     Effect::new(move |_| {
         store.git_tick.track();
         let worktree = store.active_worktree.get();
+        req.update_value(|n| *n += 1);
+        let mine = req.get_value();
+        // `try_`: el espacio de trabajo pudo desmontarse (proyecto cerrado) mientras tanto.
+        let current = move || req.try_get_value() == Some(mine);
         spawn_local(async move {
             if let Some(wt) = worktree {
-                match ipc::git_status(wt).await {
+                let res = ipc::git_status(wt).await;
+                if !current() {
+                    return;
+                }
+                match res {
                     Ok(s) => store.status.set(s),
                     Err(e) if e.code == "WORKTREE_MISSING" => store.status.set(Vec::new()),
-                    Err(e) => store.report(e),
+                    Err(e) => {
+                        store.status.set(Vec::new());
+                        store.report(e);
+                    }
                 }
             }
             if let Ok(o) = ipc::git_overview().await {
-                store.overview.set(Some(o));
+                if current() {
+                    store.overview.set(Some(o));
+                }
             }
         });
     });

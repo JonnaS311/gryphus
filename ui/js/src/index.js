@@ -132,14 +132,22 @@ export function createTerminal(el, onData, onResize) {
     }
   };
 
+  // Solo el último canal escribe: al cambiar de agente, la salida del anterior que
+  // aún estaba en vuelo se mezclaba con la del nuevo.
+  let current = null;
+
   return {
     /** Canal de Tauri cuya salida se escribe directamente en la terminal (sin pasar por WASM). */
     channel() {
       const ch = new window.__TAURI__.core.Channel();
-      ch.onmessage = handle;
+      current = ch;
+      ch.onmessage = (message) => {
+        if (current === ch) handle(message);
+      };
       return ch;
     },
     reset() {
+      current = null;
       term.reset();
     },
     /** Ajusta al contenedor e informa el tamaño actual. */

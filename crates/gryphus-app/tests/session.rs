@@ -269,6 +269,86 @@ fn deleting_a_dirty_worktree_requires_force() {
     assert!(s.project().features().is_empty());
 }
 
+/// Con varios worktrees, uno limpio y otro sucio: sin `force` no se debe borrar
+/// ninguno (antes se borraba el limpio y la feature quedaba apuntando a un
+/// worktree inexistente).
+#[test]
+fn dirty_worktree_aborts_deletion_before_touching_any_other() {
+    let w = World::new();
+    let s = w.open();
+    let (f, wt) = new_feature(&s, "login");
+    w.git
+        .add_worktree(
+            Path::new(ROOT),
+            &NewWorktree {
+                path: PathBuf::from("/externo"),
+                branch: BranchName::parse("externo").unwrap(),
+                create_branch: true,
+                base: None,
+            },
+        )
+        .unwrap();
+    s.refresh_worktrees().unwrap();
+    let extra = s
+        .project()
+        .worktree_by_path(Path::new("/externo"))
+        .unwrap()
+        .id();
+    s.attach_worktree(f, extra).unwrap();
+    // El sucio va segundo: el limpio (wt) se procesaría primero.
+    w.git.write_file(Path::new("/externo"), "sucio.txt", "x");
+
+    assert_eq!(code(s.delete_feature(f, true, false)), "CONFLICT");
+    assert_eq!(
+        w.git.list_worktrees(Path::new(ROOT)).unwrap().len(),
+        3,
+        "ningún worktree se borró"
+    );
+    let p = s.project();
+    assert!(!p.worktree(wt).unwrap().is_missing());
+    assert_eq!(p.feature(f).unwrap().worktrees(), [wt, extra]);
+}
+
+#[test]
+fn restarting_an_agent_publishes_the_starting_state() {
+    let w = World::new();
+    let s = w.open();
+    let (f, wt) = new_feature(&s, "login");
+    let agent = s.spawn_agent(f, wt, ProviderId::Claude).unwrap();
+    s.stop_agent(agent).unwrap();
+    s.restart_agent(agent).unwrap();
+    assert!(w
+        .events
+        .events()
+        .contains(&DomainEvent::AgentStatusChanged {
+            agent,
+            status: AgentStatus::Starting
+        }));
+}
+
+/// Los guardados concurrentes deben persistir siempre el estado más reciente.
+#[test]
+fn concurrent_mutations_persist_the_latest_state() {
+    let w = World::new();
+    let s = w.open();
+    let threads: Vec<_> = (0..4)
+        .map(|i| {
+            let s = s.clone();
+            std::thread::spawn(move || {
+                for j in 0..10 {
+                    s.create_feature(&format!("f{i}-{j}"), WorktreeChoice::New { base: None })
+                        .unwrap();
+                }
+            })
+        })
+        .collect();
+    for t in threads {
+        t.join().unwrap();
+    }
+    assert_eq!(s.project().features().len(), 40);
+    assert_eq!(w.saved(), s.project());
+}
+
 #[test]
 fn delete_feature_can_keep_its_worktree() {
     let w = World::new();

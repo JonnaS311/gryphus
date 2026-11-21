@@ -52,6 +52,9 @@ pub struct Store {
     pub icons_ready: RwSignal<bool>,
     pub settings: RwSignal<Settings>,
     pub settings_open: RwSignal<bool>,
+    /// Número de la última petición de `get_project`: una respuesta más antigua que
+    /// llega tarde no debe pisar el estado nuevo.
+    project_req: StoredValue<u64>,
 }
 
 impl Store {
@@ -75,6 +78,7 @@ impl Store {
             icons_ready: RwSignal::new(false),
             settings: RwSignal::new(Settings::default()),
             settings_open: RwSignal::new(false),
+            project_req: StoredValue::new(0),
         }
     }
 
@@ -179,8 +183,14 @@ impl Store {
 
     /// Vuelve a pedir el proyecto y corrige la selección si algo desapareció.
     pub fn refresh_project(self) {
+        self.project_req.update_value(|n| *n += 1);
+        let req = self.project_req.get_value();
         spawn_local(async move {
-            match ipc::get_project().await {
+            let res = ipc::get_project().await;
+            if self.project_req.get_value() != req {
+                return; // ya hay una petición más reciente en curso
+            }
+            match res {
                 Ok(project) => {
                     self.project.set(project);
                     self.loaded.set(true);

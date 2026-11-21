@@ -37,12 +37,14 @@ pub fn AgentsPanel() -> impl IntoView {
             <Show when=move || features().is_empty() && !creating.get()>
                 <p class="hint">"Crea una feature con + para empezar."</p>
             </Show>
-            {move || {
-                features()
-                    .into_iter()
-                    .map(|feature| view! { <FeatureItem feature/> })
-                    .collect_view()
-            }}
+            // Con clave: cada refresco del proyecto (p. ej. un cambio de estado de un
+            // agente) recreaba todas las features y reiniciaba lo elegido en
+            // "Lanzar agente" (proveedor y worktree) mientras el usuario lo usaba.
+            <For
+                each=features
+                key=|f| (f.id, f.worktrees.clone())
+                children=|feature| view! { <FeatureItem feature/> }
+            />
         </aside>
     }
 }

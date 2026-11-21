@@ -12,6 +12,8 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use gryphus_core::ports::{PortError, PortErrorKind, PortResult, StorePort};
 use gryphus_core::{Config, Project, ProjectId, ProviderConfig, ProviderId};
@@ -21,6 +23,9 @@ use serde::Deserialize;
 pub struct JsonStore {
     projects_dir: PathBuf,
     config_file: PathBuf,
+    /// Serializa las escrituras: en Windows `rename` sobre un destino que otro hilo
+    /// está reemplazando falla con "acceso denegado".
+    write_lock: Arc<Mutex<()>>,
 }
 
 impl JsonStore {
@@ -30,6 +35,7 @@ impl JsonStore {
         Self {
             projects_dir: data_dir.as_ref().join("projects"),
             config_file: config_file.into(),
+            write_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -55,11 +61,19 @@ fn corrupted(path: &Path, e: impl std::fmt::Display) -> PortError {
     PortError::new(PortErrorKind::Corrupted, format!("{}: {e}", path.display()))
 }
 
+/// Sufijo único por escritura: dos guardados simultáneos no pueden compartir
+/// temporal (antes solo se usaba el PID y se pisaban entre hilos).
+static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
 /// Escribe en un temporal del mismo directorio y lo renombra encima del destino.
 fn write_atomic(path: &Path, bytes: &[u8]) -> PortResult<()> {
     let dir = path.parent().unwrap_or(Path::new("."));
     fs::create_dir_all(dir).map_err(|e| io_err(e, dir))?;
-    let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
+    let tmp = path.with_extension(format!(
+        "tmp-{}-{}",
+        std::process::id(),
+        TMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
     let result = (|| {
         let mut f = fs::File::create(&tmp)?;
         f.write_all(bytes)?;
@@ -114,6 +128,7 @@ impl StorePort for JsonStore {
     fn save_project(&self, project: &Project) -> PortResult<()> {
         let json = serde_json::to_vec_pretty(project)
             .map_err(|e| PortError::new(PortErrorKind::Io, e.to_string()))?;
+        let _guard = self.write_lock.lock().unwrap_or_else(|p| p.into_inner());
         write_atomic(&self.project_file(project.id()), &json)
     }
 
