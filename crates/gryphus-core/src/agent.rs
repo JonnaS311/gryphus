@@ -6,6 +6,7 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{AgentId, FeatureId, WorktreeId};
+use crate::names::AgentName;
 
 /// Proveedores soportados. Conjunto cerrado; la configuración solo ajusta
 /// comando, argumentos y entorno (docs/architecture/agents.md).
@@ -105,11 +106,18 @@ pub struct Agent {
     pub(crate) worktree: WorktreeId,
     pub(crate) provider: ProviderId,
     pub(crate) status: AgentStatus,
+    /// `None` solo en proyectos guardados antes de que existieran los nombres;
+    /// [`crate::Project::name_unnamed_agents`] los completa al abrir.
+    #[serde(default)]
+    pub(crate) name: Option<AgentName>,
 }
 
 impl Agent {
     pub fn id(&self) -> AgentId {
         self.id
+    }
+    pub fn name(&self) -> Option<&AgentName> {
+        self.name.as_ref()
     }
     pub fn feature(&self) -> FeatureId {
         self.feature

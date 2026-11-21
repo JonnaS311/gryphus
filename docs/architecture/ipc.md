@@ -43,12 +43,15 @@ Los tipos viven en **`gryphus-ipc`** (solo `serde`) y los compilan tanto `src-ta
 | `delete_feature` | `DeleteFeatureReq { feature, remove_worktrees, force }` | — |
 | `spawn_agent` | `SpawnAgentReq { feature, worktree, provider }` | id del agente |
 | `stop_agent` / `restart_agent` / `remove_agent` | `AgentReq { agent }` | — |
+| `rename_agent` | `RenameAgentReq { agent, name }` (1–40 caracteres) | — |
 | `agent_input` | `AgentInputReq { agent, data }` | — (síncrono: camino caliente) |
 | `agent_resize` | `AgentResizeReq { agent, cols, rows }` | — |
 | `attach_agent` | `AgentReq` + `channel` | — (ver Channels) |
 | `detach_agent` | — | — |
 | `list_dir` / `read_file` | `PathReq { worktree, path }` | `Vec<DirEntryDto>` / `FileContentDto` |
 | `write_file` | `WriteFileReq { worktree, path, content }` | — |
+| `rename_path` | `RenamePathReq { worktree, path, new_name }` (`new_name` es un solo componente; nunca sobrescribe) | ruta nueva |
+| `copy_path` | `CopyPathReq { from_worktree, from, to_worktree, to_dir }` (si el nombre existe usa `nombre copia.ext`) | ruta creada |
 | `git_status` | `WorktreeReq { worktree }` | `Vec<FileStatusDto>` |
 | `git_diff` | `DiffReq { worktree, base: Option<branch> }` | `DiffDto` (`None` = sin commit; `Some` = desde el merge-base) |
 | `git_overview` | — | `GitOverviewDto { head, branches }` |

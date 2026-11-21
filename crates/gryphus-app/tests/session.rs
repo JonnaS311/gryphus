@@ -576,6 +576,63 @@ fn file_operations_use_the_worktree_root() {
 }
 
 #[test]
+fn rename_and_paste_files() {
+    let w = World::new();
+    let s = w.open();
+    let main = main_wt(&s);
+    s.write_file(main, "a.txt", b"a").unwrap();
+    s.write_file(main, "src/b.rs", b"b").unwrap();
+
+    // Renombrar en la raíz y dentro de un directorio.
+    assert_eq!(
+        s.rename_path(main, "a.txt", " c.txt ").unwrap().as_str(),
+        "c.txt"
+    );
+    assert_eq!(
+        s.rename_path(main, "src/b.rs", "d.rs").unwrap().as_str(),
+        "src/d.rs"
+    );
+    assert_eq!(
+        code(s.rename_path(main, "c.txt", "x/y.txt")),
+        "INVALID_PATH"
+    );
+    assert_eq!(code(s.rename_path(main, "c.txt", "src")), "ALREADY_EXISTS");
+
+    // Pegar: en la raíz choca con el original → `copia`; en otro directorio conserva el nombre.
+    assert_eq!(
+        s.copy_path(main, "c.txt", main, "").unwrap().as_str(),
+        "c copia.txt"
+    );
+    assert_eq!(
+        s.copy_path(main, "c.txt", main, "").unwrap().as_str(),
+        "c copia 2.txt"
+    );
+    assert_eq!(
+        s.copy_path(main, "c.txt", main, "src").unwrap().as_str(),
+        "src/c.txt"
+    );
+    assert_eq!(
+        s.read_file(main, "c copia.txt").unwrap(),
+        FileContent::Text("a".into())
+    );
+}
+
+#[test]
+fn agents_are_named_and_renamed() {
+    let w = World::new();
+    let s = w.open();
+    let (f, wt) = new_feature(&s, "login");
+    let agent = s.spawn_agent(f, wt, ProviderId::Claude).unwrap();
+    assert!(s.project().agent(agent).unwrap().name().is_some());
+    s.rename_agent(agent, "  Revisor ").unwrap();
+    assert_eq!(
+        w.saved().agent(agent).unwrap().name().unwrap().as_str(),
+        "Revisor"
+    );
+    assert_eq!(code(s.rename_agent(agent, "   ")), "INVALID_NAME");
+}
+
+#[test]
 fn disk_changes_publish_files_and_git_events() {
     let w = World::new();
     let s = w.open();

@@ -102,7 +102,7 @@ pub fn AgentTerminal() -> impl IntoView {
                 .iter()
                 .find(|a| Some(a.id) == store.selected_agent.get())?;
             let (class, label) = logic::status_badge(&agent.status);
-            Some((format!("{} #{}", agent.provider, agent.id), class, label))
+            Some((format!("{} · {}", agent.name, agent.provider), class, label))
         })
     };
 

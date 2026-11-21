@@ -229,7 +229,106 @@ impl FsPort for LocalFs {
         Ok(())
     }
 
+    fn rename(&self, root: &Path, from: &RelPath, to: &RelPath) -> PortResult<()> {
+        if from.is_root() || to.is_root() {
+            return Err(root_err());
+        }
+        if to.starts_with(from) && to != from {
+            return Err(into_itself(from));
+        }
+        let src = resolve_existing(root, from)?;
+        let dst = prepare_target(root, to)?;
+        // Cambiar solo mayúsculas (`a.txt` → `A.txt`) en Windows/macOS: `dst` "existe"
+        // porque es el mismo archivo; eso no es un conflicto.
+        if fs::symlink_metadata(&dst).is_ok() && !same_file(&src, &dst) {
+            return Err(already_exists(to));
+        }
+        fs::rename(&src, &dst).map_err(|e| io_err(e, &dst))
+    }
+
+    fn copy(
+        &self,
+        from_root: &Path,
+        from: &RelPath,
+        to_root: &Path,
+        to: &RelPath,
+    ) -> PortResult<()> {
+        if from.is_root() || to.is_root() {
+            return Err(root_err());
+        }
+        let src = resolve_existing(from_root, from)?;
+        let dst = prepare_target(to_root, to)?;
+        if fs::symlink_metadata(&dst).is_ok() {
+            return Err(already_exists(to));
+        }
+        if same_file(from_root, to_root) && to.starts_with(from) {
+            return Err(into_itself(from));
+        }
+        copy_recursive(&src, &dst).inspect_err(|_| {
+            let _ = if dst.is_dir() {
+                fs::remove_dir_all(&dst)
+            } else {
+                fs::remove_file(&dst)
+            };
+        })
+    }
+
     fn watch(&self, root: &Path, sink: Arc<dyn FsChangeSink>) -> PortResult<Subscription> {
         watch::start(root, self.debounce, sink)
     }
+}
+
+fn root_err() -> PortError {
+    PortError::new(
+        PortErrorKind::InvalidInput,
+        "no se puede renombrar ni copiar la raíz del worktree",
+    )
+}
+
+fn already_exists(rel: &RelPath) -> PortError {
+    PortError::new(PortErrorKind::AlreadyExists, format!("{rel} ya existe"))
+}
+
+fn into_itself(rel: &RelPath) -> PortError {
+    PortError::new(
+        PortErrorKind::InvalidInput,
+        format!("no se puede copiar ni mover {rel} dentro de sí mismo"),
+    )
+}
+
+fn same_file(a: &Path, b: &Path) -> bool {
+    matches!((a.canonicalize(), b.canonicalize()), (Ok(x), Ok(y)) if x == y)
+}
+
+/// Ruta destino: su directorio padre debe existir y estar dentro del worktree.
+fn prepare_target(root: &Path, to: &RelPath) -> PortResult<PathBuf> {
+    let parent = to.parent().unwrap_or_default();
+    let parent_path = resolve_existing(root, &parent)?;
+    if !parent_path.is_dir() {
+        return Err(PortError::new(
+            PortErrorKind::InvalidInput,
+            format!("{parent} no es un directorio"),
+        ));
+    }
+    Ok(to.to_path(root))
+}
+
+/// Copia archivos y directorios. Los symlinks internos se omiten (podrían apuntar
+/// fuera del worktree) y `.git` nunca se copia.
+fn copy_recursive(src: &Path, dst: &Path) -> PortResult<()> {
+    let meta = fs::metadata(src).map_err(|e| io_err(e, src))?;
+    if !meta.is_dir() {
+        return fs::copy(src, dst).map(|_| ()).map_err(|e| io_err(e, dst));
+    }
+    fs::create_dir(dst).map_err(|e| io_err(e, dst))?;
+    for entry in fs::read_dir(src).map_err(|e| io_err(e, src))? {
+        let entry = entry.map_err(|e| io_err(e, src))?;
+        let name = entry.file_name();
+        let kind = entry.file_type().map_err(|e| io_err(e, &entry.path()))?;
+        if kind.is_symlink() || name == ".git" || name.to_string_lossy().contains(TMP_MARKER) {
+            continue;
+        }
+        copy_recursive(&entry.path(), &dst.join(&name))?;
+    }
+    Ok(())
 }

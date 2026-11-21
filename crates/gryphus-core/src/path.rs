@@ -59,7 +59,37 @@ impl RelPath {
         self.0.split('/').filter(|c| !c.is_empty())
     }
 
+    /// Último componente; `None` para la raíz.
+    pub fn file_name(&self) -> Option<&str> {
+        self.components().last()
+    }
+
+    /// Directorio que la contiene; `None` para la raíz.
+    pub fn parent(&self) -> Option<Self> {
+        if self.is_root() {
+            return None;
+        }
+        Some(Self(
+            self.0
+                .rsplit_once('/')
+                .map_or_else(String::new, |(p, _)| p.to_owned()),
+        ))
+    }
+
+    /// `self` es `other` o está dentro de él.
+    pub fn starts_with(&self, other: &RelPath) -> bool {
+        other.is_root()
+            || self.0 == other.0
+            || self
+                .0
+                .strip_prefix(&other.0)
+                .is_some_and(|rest| rest.starts_with('/'))
+    }
+
     pub fn join(&self, name: &str) -> Result<Self, PathError> {
+        if self.is_root() {
+            return Self::parse(name);
+        }
         Self::parse(&format!("{}/{}", self.0, name))
     }
 
@@ -144,12 +174,29 @@ mod tests {
         let file = dir.join("lib.rs").unwrap();
         assert_eq!(file.as_str(), "src/lib.rs");
         assert!(dir.join("..").is_err());
+        assert_eq!(RelPath::root().join("a.txt").unwrap().as_str(), "a.txt");
+        assert!(RelPath::root().join("/abs").is_err());
         let root = Path::new("repo");
         assert_eq!(
             file.to_path(root),
             Path::new("repo").join("src").join("lib.rs")
         );
         assert_eq!(RelPath::root().to_path(root), root);
+    }
+
+    #[test]
+    fn parent_file_name_and_starts_with() {
+        let file = RelPath::parse("src/bin/tool.rs").unwrap();
+        assert_eq!(file.file_name(), Some("tool.rs"));
+        assert_eq!(file.parent().unwrap().as_str(), "src/bin");
+        assert!(RelPath::parse("a").unwrap().parent().unwrap().is_root());
+        assert_eq!(RelPath::root().parent(), None);
+        assert_eq!(RelPath::root().file_name(), None);
+        let src = RelPath::parse("src").unwrap();
+        assert!(file.starts_with(&src));
+        assert!(src.starts_with(&src));
+        assert!(!RelPath::parse("srcx/a").unwrap().starts_with(&src));
+        assert!(file.starts_with(&RelPath::root()));
     }
 
     proptest! {
