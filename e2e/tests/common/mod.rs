@@ -20,6 +20,8 @@ pub const TIMEOUT: Duration = Duration::from_secs(30);
 pub const ENTER: &str = "\u{E007}";
 pub const CTRL: &str = "\u{E009}";
 pub const END: &str = "\u{E010}";
+pub const TAB: &str = "\u{E004}";
+pub const SHIFT: &str = "\u{E008}";
 pub const RELEASE: &str = "\u{E000}";
 
 pub fn enabled() -> bool {
