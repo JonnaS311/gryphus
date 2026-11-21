@@ -76,7 +76,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        # 24.04: en 26.04 (ubuntu-latest) no existe el paquete webkit2gtk-driver
+        os: [windows-latest, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
     env:
       GRYPHUS_E2E: "1"
@@ -113,10 +114,12 @@ jobs:
         if: runner.os == 'Windows'
         run: cargo test -p gryphus-e2e -- --nocapture
 
-      - name: Capturas
+      - name: Capturas y logs del driver
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: e2e-screens-${{ matrix.os }}
-          path: target/e2e-screens
+          name: e2e-${{ matrix.os }}
+          path: |
+            target/e2e-screens
+            target/e2e-logs
           if-no-files-found: ignore
