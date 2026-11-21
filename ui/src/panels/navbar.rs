@@ -3,7 +3,9 @@
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 
-use crate::settings::{clamp_size, Settings, MONO_FONTS, SIZE_MAX, SIZE_MIN, UI_FONTS};
+use crate::settings::{
+    clamp_size, Settings, INITIAL_AGENTS, MONO_FONTS, SIZE_MAX, SIZE_MIN, UI_FONTS,
+};
 use crate::store::Store;
 
 #[component]
@@ -179,6 +181,33 @@ fn SettingsDialog() -> impl IntoView {
                     prop:value=move || store.settings.with(|s| s.mono_size.to_string())
                     on:change=move |ev| size_input(event_target_value(&ev), |s, n| s.mono_size = n)
                 />
+            </label>
+
+            <h3>"Features"</h3>
+            <label>
+                "Agente inicial"
+                <select
+                    id="set-initial-agent"
+                    title="Agente que se lanza automáticamente al crear una feature"
+                    on:change=move |ev| {
+                        let v = event_target_value(&ev);
+                        edit(&|s| s.initial_agent = v.clone());
+                    }
+                >
+                    {INITIAL_AGENTS
+                        .iter()
+                        .map(|(id, label)| {
+                            view! {
+                                <option
+                                    value=*id
+                                    selected=move || store.settings.with(|s| s.initial_agent == *id)
+                                >
+                                    {*label}
+                                </option>
+                            }
+                        })
+                        .collect_view()}
+                </select>
             </label>
 
             <footer class="settings-footer">
