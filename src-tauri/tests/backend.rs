@@ -75,7 +75,12 @@ fn feature_agent_files_and_git_end_to_end() {
     let wt = session.project().feature(feature).unwrap().worktrees()[0];
     let wt_path = session.project().worktree(wt).unwrap().path().to_path_buf();
     assert!(wt_path.join("README.md").exists(), "worktree en disco");
-    assert!(wt_path.starts_with(env.repo.base()));
+    // canonicalize: en CI de Windows el temporal usa nombres 8.3 (RUNNER~1) y git
+    // devuelve la ruta larga.
+    assert!(wt_path
+        .canonicalize()
+        .unwrap()
+        .starts_with(env.repo.base().canonicalize().unwrap()));
 
     // 2. Agente (fake-agent en ConPTY) que escribe un archivo en su worktree.
     let agent = session

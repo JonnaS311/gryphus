@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use gryphus_core::ports::{FsChangeSink, PortError, PortErrorKind, PortResult, Subscription};
 use gryphus_core::RelPath;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
-use notify::{RecursiveMode, Watcher};
+use notify::{EventKind, RecursiveMode, Watcher};
 
 use crate::TMP_MARKER;
 
@@ -29,10 +29,24 @@ pub(crate) fn start(
     }
     let (tx, rx) = mpsc::channel::<PathBuf>();
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-        if let Ok(event) = res {
-            for path in event.paths {
-                let _ = tx.send(path);
+        let Ok(event) = res else { return };
+        // Las lecturas no cambian nada. En Linux (inotify) llegan como `Access` y,
+        // si no se descartan, leer `.git` (p. ej. `git worktree list` al recibir
+        // un cambio de git) vuelve a disparar el watcher en un bucle sin fin.
+        if matches!(event.kind, EventKind::Access(_)) {
+            return;
+        }
+        let created = matches!(event.kind, EventKind::Create(_));
+        for path in event.paths {
+            // inotify vigila un directorio nuevo solo después de crearse: lo que
+            // se escribió dentro en ese intervalo no genera eventos. Se recorre.
+            if created && path.is_dir() {
+                let mut budget = NEW_DIR_BUDGET;
+                walk_new_dir(&path, &mut budget, &mut |p| {
+                    let _ = tx.send(p);
+                });
             }
+            let _ = tx.send(path);
         }
     })
     .map_err(|e| PortError::new(PortErrorKind::Io, e.to_string()))?;
@@ -80,6 +94,29 @@ pub(crate) fn start(
         stop_flag.store(true, Ordering::SeqCst);
         drop(watcher); // cierra el canal: el hilo termina
     }))
+}
+
+/// Máximo de entradas que se reportan al recorrer un directorio recién creado
+/// (un `npm install` puede crear cientos de miles; basta con el aviso del padre).
+const NEW_DIR_BUDGET: usize = 2_000;
+
+/// Reporta el contenido de un directorio recién creado, hasta `budget` entradas.
+fn walk_new_dir(dir: &Path, budget: &mut usize, report: &mut dyn FnMut(PathBuf)) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if *budget == 0 {
+            return;
+        }
+        *budget -= 1;
+        let path = entry.path();
+        let is_dir = entry.file_type().is_ok_and(|t| t.is_dir());
+        report(path.clone());
+        if is_dir {
+            walk_new_dir(&path, budget, report);
+        }
+    }
 }
 
 /// Decide si una ruta está ignorada por git, con las mismas fuentes que
