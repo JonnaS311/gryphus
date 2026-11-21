@@ -8,6 +8,11 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 /// Devuelve `(programa, argumentos previos)` o `None` si no existe.
+///
+/// Un `.cmd`/`.bat` se lanza como `cmd.exe /D /V:OFF /C @ "<script>" args…`. El `@`
+/// hace que la línea no empiece por comillas: si empieza (y hay más de dos
+/// comillas o paréntesis, p. ej. `Program Files (x86)` o un argumento con
+/// espacios), `cmd /C` quita la primera y la última comilla y la orden se rompe.
 pub fn resolve_program(
     program: &str,
     path_override: Option<&str>,
@@ -17,9 +22,35 @@ pub fn resolve_program(
         let cmd = std::env::var_os("ComSpec")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("cmd.exe"));
-        return Some((cmd, vec!["/C".into(), found.into_os_string()]));
+        return Some((
+            cmd,
+            vec![
+                "/D".into(),
+                "/V:OFF".into(),
+                "/C".into(),
+                "@".into(),
+                found.into_os_string(),
+            ],
+        ));
     }
     Some((found, Vec::new()))
+}
+
+/// Si `arg` (o la ruta del script) no puede pasar intacto por `cmd.exe`, explica
+/// por qué. El PTY solo entrecomilla argumentos con espacios o comillas, y cmd
+/// interpreta `& | < > ^` fuera de comillas y expande `%VAR%` incluso dentro:
+/// un argumento así ejecutaría otra orden o llegaría alterado al agente.
+pub fn batch_arg_problem(arg: &str) -> Option<&'static str> {
+    let quoted = arg.is_empty() || arg.contains([' ', '\t']);
+    if arg.contains(['"', '\r', '\n']) {
+        Some("contiene comillas o saltos de línea")
+    } else if arg.contains('%') {
+        Some("contiene '%' (cmd.exe expandiría variables)")
+    } else if !quoted && arg.contains(['&', '|', '<', '>', '^']) {
+        Some("contiene caracteres especiales de cmd.exe (& | < > ^)")
+    } else {
+        None
+    }
 }
 
 fn is_batch(path: &Path) -> bool {
@@ -112,8 +143,57 @@ mod tests {
             .to_string_lossy()
             .to_lowercase()
             .ends_with("cmd.exe"));
-        assert_eq!(args[0], "/C");
-        assert_eq!(PathBuf::from(&args[1]), dir.path().join("claude.cmd"));
+        assert_eq!(args[..4], ["/D", "/V:OFF", "/C", "@"]);
+        assert_eq!(PathBuf::from(&args[4]), dir.path().join("claude.cmd"));
+    }
+
+    /// Script en una ruta con espacios y paréntesis y argumentos con espacios y
+    /// `&`: antes `cmd /C` quitaba comillas y fallaba con "no se reconoce…".
+    #[cfg(windows)]
+    #[test]
+    fn batch_shims_survive_spaces_parentheses_and_quoted_args() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("Program Files (x86)");
+        std::fs::create_dir(&bin).unwrap();
+        std::fs::write(bin.join("eco.cmd"), "@echo off\r\necho ARGS=[%*]\r\n").unwrap();
+        let path = bin.to_string_lossy().into_owned();
+        let (program, prefix) = resolve_program("eco", Some(&path)).unwrap();
+        let out = std::process::Command::new(program)
+            .args(prefix)
+            .args(["a b", "x&y z", "plano"])
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            text.contains(r#"ARGS=["a b" "x&y z" plano]"#),
+            "salida: {text} {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    #[test]
+    fn unsafe_batch_args_are_detected() {
+        for ok in [
+            "--verbose",
+            "a b",
+            "x&y z",
+            "",
+            "C:\\ruta\\sin espacios",
+            "(x)",
+        ] {
+            assert_eq!(batch_arg_problem(ok), None, "{ok:?}");
+        }
+        for bad in [
+            "a&b",
+            "x|y",
+            "a>b",
+            "^x",
+            "%PATH%",
+            "con \"comillas\"",
+            "a\nb",
+        ] {
+            assert!(batch_arg_problem(bad).is_some(), "{bad:?}");
+        }
     }
 
     /// npm deja un script sh sin extensión junto al `.cmd`; no es ejecutable en Windows.
@@ -125,10 +205,10 @@ mod tests {
         std::fs::write(dir.path().join("opencode.cmd"), "@echo off").unwrap();
         let path = dir.path().to_string_lossy().into_owned();
         let (_, args) = resolve_program("opencode", Some(&path)).unwrap();
-        assert_eq!(PathBuf::from(&args[1]), dir.path().join("opencode.cmd"));
+        assert_eq!(PathBuf::from(&args[4]), dir.path().join("opencode.cmd"));
         // Un nombre explícito con extensión se respeta tal cual.
         let (_, args) = resolve_program("opencode.cmd", Some(&path)).unwrap();
-        assert_eq!(PathBuf::from(&args[1]), dir.path().join("opencode.cmd"));
+        assert_eq!(PathBuf::from(&args[4]), dir.path().join("opencode.cmd"));
         // Solo el script sin extensión: no hay nada ejecutable.
         std::fs::remove_file(dir.path().join("opencode.cmd")).unwrap();
         assert!(resolve_program("opencode", Some(&path)).is_none());

@@ -102,6 +102,7 @@ pub fn CodeEditor() -> impl IntoView {
         spawn_local(async move {
             let created = Editor::create(&div, save, move |d| {
                 set_dirty.set(d);
+                store.editor_dirty.set(d);
                 if d {
                     set_saved_flash.set(false);
                 }
@@ -156,6 +157,7 @@ pub fn CodeEditor() -> impl IntoView {
     });
 
     on_cleanup(move || {
+        let _ = store.editor_dirty.try_set(false);
         editor.update_value(|e| {
             if let Some(e) = e.take() {
                 e.destroy();

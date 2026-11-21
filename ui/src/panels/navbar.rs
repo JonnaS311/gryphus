@@ -22,19 +22,12 @@ pub fn Navbar() -> impl IntoView {
     };
 
     let close = move |_| {
-        let active = store.project.with_untracked(|p| {
-            p.as_ref().map_or(0, |p| {
-                p.agents.iter().filter(|a| a.status.is_active()).count()
-            })
-        });
+        let warning = store.close_warning();
         spawn_local(async move {
-            if active > 0
-                && !store.ask(format!(
-                    "Hay {active} agente(s) en ejecución. Cerrar el proyecto los detendrá. ¿Continuar?"
-                ))
-                .await
-            {
-                return;
+            if let Some(warning) = warning {
+                if !store.ask(warning).await {
+                    return;
+                }
             }
             store.close_project();
         });

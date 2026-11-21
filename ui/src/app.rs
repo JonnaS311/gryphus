@@ -28,6 +28,35 @@ pub fn App() -> impl IntoView {
     store.refresh_project();
     register_events(store);
 
+    // Guarda de cierre: con agentes activos o cambios sin guardar, la X de la
+    // ventana pregunta en vez de detenerlos/descartarlos en silencio.
+    Effect::new(move |prev: Option<bool>| {
+        let active = store.project.with(|p| {
+            p.as_ref()
+                .is_some_and(|p| p.agents.iter().any(|a| a.status.is_active()))
+        });
+        let guard = active || store.editor_dirty.get();
+        if prev != Some(guard) {
+            spawn_local(async move {
+                let _ = ipc::set_close_guard(guard).await;
+            });
+        }
+        guard
+    });
+    listen(event::CLOSE_REQUESTED, move |_: ()| {
+        spawn_local(async move {
+            let proceed = match store.close_warning() {
+                Some(warning) => store.ask(warning).await,
+                None => true,
+            };
+            if proceed {
+                if let Err(e) = ipc::confirm_close().await {
+                    store.report(e);
+                }
+            }
+        });
+    });
+
     let _keys = window_event_listener(leptos::ev::keydown, move |ev| {
         if !ev.ctrl_key() {
             return;
@@ -153,8 +182,8 @@ fn ConfirmDialog() -> impl IntoView {
             return;
         }
         match ev.key().as_str() {
-            "Escape" => store.answer(false),
-            "Enter" => store.answer(true),
+            "Escape" => store.answer(None),
+            "Enter" => store.answer(Some(0)),
             _ => return,
         }
         ev.prevent_default();
@@ -163,24 +192,38 @@ fn ConfirmDialog() -> impl IntoView {
     move || {
         store
             .confirm
-            .with(|c| c.as_ref().map(|c| c.message.clone()))
-            .map(|message| {
+            .with(|c| c.as_ref().map(|c| (c.message.clone(), c.choices.clone())))
+            .map(|(message, choices)| {
                 view! {
-                    <div class="backdrop over" on:click=move |_| store.answer(false)></div>
+                    <div class="backdrop over" on:click=move |_| store.answer(None)></div>
                     <section class="confirm" role="alertdialog" aria-modal="true">
                         <p class="confirm-message">{message}</p>
                         <div class="confirm-actions">
-                            <button id="confirm-cancel" on:click=move |_| store.answer(false)>
+                            <button id="confirm-cancel" on:click=move |_| store.answer(None)>
                                 "Cancelar"
                             </button>
-                            <button
-                                id="confirm-accept"
-                                class="primary"
-                                autofocus=true
-                                on:click=move |_| store.answer(true)
-                            >
-                                "Aceptar"
-                            </button>
+                            {choices
+                                .into_iter()
+                                .enumerate()
+                                .rev()
+                                .map(|(i, label)| {
+                                    let primary = i == 0;
+                                    view! {
+                                        <button
+                                            id=if primary {
+                                                "confirm-accept".to_owned()
+                                            } else {
+                                                format!("confirm-choice-{i}")
+                                            }
+                                            class:primary=primary
+                                            autofocus=primary
+                                            on:click=move |_| store.answer(Some(i))
+                                        >
+                                            {label}
+                                        </button>
+                                    }
+                                })
+                                .collect_view()}
                         </div>
                     </section>
                 }

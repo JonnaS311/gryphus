@@ -77,6 +77,20 @@ pub fn ui_ready(app: AppHandle) -> u64 {
     })
 }
 
+// ── Cierre de ventana ────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn set_close_guard(window: WebviewWindow, state: State<'_, AppState>, req: CloseGuardReq) {
+    state.set_close_guard(window.label(), req.guard);
+}
+
+#[tauri::command]
+pub fn confirm_close(window: WebviewWindow, state: State<'_, AppState>) -> CmdResult<()> {
+    state.set_close_guard(window.label(), false);
+    // `destroy` no vuelve a emitir CloseRequested; `Destroyed` hace la limpieza.
+    window.destroy().map_err(internal)
+}
+
 // ── Proyecto y ventanas ──────────────────────────────────────────────────────
 
 #[tauri::command]

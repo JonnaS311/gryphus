@@ -21,10 +21,12 @@ pub struct OpenFile {
     pub path: String,
 }
 
-/// Confirmación pendiente (modal `app::ConfirmDialog`).
+/// Confirmación pendiente (modal `app::ConfirmDialog`): "Cancelar" más una o
+/// varias opciones; la primera es la principal (Enter).
 pub struct ConfirmRequest {
     pub message: String,
-    tx: oneshot::Sender<bool>,
+    pub choices: Vec<String>,
+    tx: oneshot::Sender<Option<usize>>,
 }
 
 #[derive(Clone, Copy)]
@@ -52,6 +54,8 @@ pub struct Store {
     pub icons_ready: RwSignal<bool>,
     pub settings: RwSignal<Settings>,
     pub settings_open: RwSignal<bool>,
+    /// El editor tiene cambios sin guardar (para avisar al cerrar proyecto o ventana).
+    pub editor_dirty: RwSignal<bool>,
     /// Número de la última petición de `get_project`: una respuesta más antigua que
     /// llega tarde no debe pisar el estado nuevo.
     project_req: StoredValue<u64>,
@@ -78,25 +82,39 @@ impl Store {
             icons_ready: RwSignal::new(false),
             settings: RwSignal::new(Settings::default()),
             settings_open: RwSignal::new(false),
+            editor_dirty: RwSignal::new(false),
             project_req: StoredValue::new(0),
         }
     }
 
     /// Pide confirmación con el modal de la app. Una petición nueva cancela la anterior.
     pub async fn ask(self, message: impl Into<String>) -> bool {
+        self.choose(message, ["Aceptar"]).await == Some(0)
+    }
+
+    /// Pide elegir entre varias opciones. `None` = cancelado (botón, Esc o fondo).
+    pub async fn choose<const N: usize>(
+        self,
+        message: impl Into<String>,
+        choices: [&str; N],
+    ) -> Option<usize> {
         let message = message.into();
         if let Some(answer) = crate::bridge::dialog::e2e_auto_confirm(&message) {
-            return answer;
+            return answer.then_some(0);
         }
         let (tx, rx) = oneshot::channel();
-        self.confirm.set(Some(ConfirmRequest { message, tx }));
-        rx.await.unwrap_or(false)
+        self.confirm.set(Some(ConfirmRequest {
+            message,
+            choices: choices.iter().map(|c| (*c).to_owned()).collect(),
+            tx,
+        }));
+        rx.await.ok().flatten()
     }
 
     /// Responde la confirmación pendiente y cierra el modal.
-    pub fn answer(&self, accepted: bool) {
+    pub fn answer(&self, choice: Option<usize>) {
         if let Some(req) = self.confirm.try_update(Option::take).flatten() {
-            let _ = req.tx.send(accepted);
+            let _ = req.tx.send(choice);
         }
     }
 
@@ -157,6 +175,23 @@ impl Store {
             self.view.set(CenterView::Agent);
             self.refresh_project();
         });
+    }
+
+    /// Qué se perdería al cerrar (agentes activos, cambios sin guardar), o `None`.
+    pub fn close_warning(&self) -> Option<String> {
+        let active = self.project.with_untracked(|p| {
+            p.as_ref().map_or(0, |p| {
+                p.agents.iter().filter(|a| a.status.is_active()).count()
+            })
+        });
+        let mut parts = Vec::new();
+        if active > 0 {
+            parts.push(format!("se detendrán {active} agente(s) en ejecución"));
+        }
+        if self.editor_dirty.get_untracked() {
+            parts.push("se perderán los cambios sin guardar del editor".to_owned());
+        }
+        (!parts.is_empty()).then(|| format!("Al cerrar, {}. ¿Continuar?", parts.join(" y ")))
     }
 
     pub fn is_expanded(&self, worktree: u64, path: &str) -> bool {

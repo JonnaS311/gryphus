@@ -8,7 +8,7 @@ pub mod startup;
 pub mod state;
 
 use tauri::webview::PageLoadEvent;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 /// Fondo de la ventana desde el primer frame (sin destello blanco mientras carga WebView2).
 const BACKGROUND: tauri::window::Color = tauri::window::Color(0x15, 0x17, 0x1c, 0xff);
@@ -55,12 +55,23 @@ pub fn run() {
             startup::trace("window_built");
             Ok(())
         })
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::Destroyed = event {
+        .on_window_event(|window, event| match event {
+            // Con agentes activos o cambios sin guardar, la UI confirma antes de cerrar
+            // (antes la X los detenía/descartaba sin preguntar).
+            tauri::WindowEvent::CloseRequested { api, .. }
+                if window
+                    .state::<state::AppState>()
+                    .close_guarded(window.label()) =>
+            {
+                api.prevent_close();
+                let _ = window.emit_to(window.label(), gryphus_ipc::event::CLOSE_REQUESTED, ());
+            }
+            tauri::WindowEvent::Destroyed => {
                 window
                     .state::<state::AppState>()
                     .close_window(window.label());
             }
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             commands::pick_folder,
@@ -84,6 +95,8 @@ pub fn run() {
             commands::git_diff,
             commands::git_overview,
             commands::ui_ready,
+            commands::set_close_guard,
+            commands::confirm_close,
         ])
         .run(tauri::generate_context!())
         .expect("error al iniciar Gryphus");

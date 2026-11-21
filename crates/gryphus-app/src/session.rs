@@ -11,7 +11,7 @@ use gryphus_core::ports::{
 };
 use gryphus_core::{
     AgentId, AgentStatus, BranchName, Config, DomainError, DomainEvent, EventSink, FeatureId,
-    FeatureName, Project, ProjectId, ProviderId, RelPath, WorktreeId,
+    FeatureName, PathError, Project, ProjectId, ProviderId, RelPath, WorktreeId,
 };
 
 use crate::error::AppResult;
@@ -185,17 +185,24 @@ impl ProjectSession {
     ) -> AppResult<()> {
         let inner = &self.inner;
         // Valida contra una copia antes de tocar git.
-        let to_remove: Vec<(WorktreeId, PathBuf)> = {
+        let (owned, to_remove): (Vec<WorktreeId>, Vec<(WorktreeId, PathBuf)>) = {
             let p = lock(&inner.project);
             let mut probe = p.clone();
             let removed = probe.delete_feature(feature)?;
-            removed
+            let worktrees: Vec<_> = removed
                 .worktrees()
                 .iter()
                 .filter_map(|id| p.worktree(*id).ok())
-                .filter(|w| !w.is_main() && !w.is_missing())
-                .map(|w| (w.id(), w.path().to_path_buf()))
-                .collect()
+                .filter(|w| !w.is_main())
+                .collect();
+            (
+                worktrees.iter().map(|w| w.id()).collect(),
+                worktrees
+                    .iter()
+                    .filter(|w| !w.is_missing())
+                    .map(|w| (w.id(), w.path().to_path_buf()))
+                    .collect(),
+            )
         };
         if remove_worktrees {
             // Sin `force`, comprueba TODOS antes de borrar ninguno: si el segundo
@@ -218,16 +225,18 @@ impl ProjectSession {
         inner.mutate(|p| p.delete_feature(feature))?;
         if remove_worktrees {
             inner.refresh_worktrees()?;
-            inner.mutate(|p| {
-                for (id, _) in &to_remove {
-                    if p.worktree(*id).is_ok_and(|w| w.is_missing()) {
-                        p.forget_worktree(*id)?;
-                    }
-                }
-                Ok(())
-            })?;
-            inner.ensure_watches();
         }
+        // Se olvidan los que ya no existen: los recién borrados y los que ya faltaban
+        // (antes estos quedaban para siempre en el registro, sin feature y sin uso).
+        inner.mutate(|p| {
+            for id in &owned {
+                if p.worktree(*id).is_ok_and(|w| w.is_missing()) {
+                    p.forget_worktree(*id)?;
+                }
+            }
+            Ok(())
+        })?;
+        inner.ensure_watches();
         inner.publish(DomainEvent::FeatureRemoved(feature));
         inner.publish(DomainEvent::WorktreesChanged);
         Ok(())
@@ -334,11 +343,17 @@ impl ProjectSession {
 
     pub fn write_file(&self, worktree: WorktreeId, file: &str, content: &[u8]) -> AppResult<()> {
         let root = self.inner.worktree_path(worktree)?;
-        Ok(self
-            .inner
-            .ports
-            .fs
-            .write_file(&root, &RelPath::parse(file)?, content)?)
+        let rel = RelPath::parse(file)?;
+        // `.git` (carpeta o archivo de un worktree enlazado) es de git: escribir ahí
+        // podría instalar hooks o corromper el repo. El explorador ya lo oculta.
+        if let Some(first) = rel
+            .components()
+            .next()
+            .filter(|c| c.eq_ignore_ascii_case(".git"))
+        {
+            return Err(PathError::InvalidComponent(first.to_owned()).into());
+        }
+        Ok(self.inner.ports.fs.write_file(&root, &rel, content)?)
     }
 
     // ── Git ──────────────────────────────────────────────────────────────────

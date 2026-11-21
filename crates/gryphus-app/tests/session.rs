@@ -349,6 +349,39 @@ fn concurrent_mutations_persist_the_latest_state() {
     assert_eq!(w.saved(), s.project());
 }
 
+/// Un worktree que ya faltaba (borrado fuera de Gryphus) no debe quedarse en el
+/// registro tras borrar su feature.
+#[test]
+fn deleting_a_feature_forgets_its_already_missing_worktrees() {
+    let w = World::new();
+    let s = w.open();
+    let (f, wt) = new_feature(&s, "login");
+    let path = s.project().worktree(wt).unwrap().path().to_path_buf();
+    w.git.remove_worktree(Path::new(ROOT), &path, true).unwrap();
+    s.refresh_worktrees().unwrap();
+    assert!(s.project().worktree(wt).unwrap().is_missing());
+
+    s.delete_feature(f, false, false).unwrap();
+    assert!(s.project().worktree(wt).is_err(), "olvidado");
+    assert_eq!(w.saved(), s.project());
+}
+
+#[test]
+fn writing_inside_dot_git_is_rejected() {
+    let w = World::new();
+    let s = w.open();
+    let main = main_wt(&s);
+    assert_eq!(
+        code(s.write_file(main, ".git/hooks/pre-commit", b"x")),
+        "INVALID_PATH"
+    );
+    assert_eq!(
+        code(s.write_file(main, ".GIT/config", b"x")),
+        "INVALID_PATH"
+    );
+    s.write_file(main, "docs/.git-notas.md", b"ok").unwrap();
+}
+
 #[test]
 fn delete_feature_can_keep_its_worktree() {
     let w = World::new();

@@ -84,11 +84,18 @@ impl ChunkSink for CollectingChunkSink {
 #[derive(Default)]
 pub struct CollectingFsSink {
     paths: Mutex<Vec<RelPath>>,
+    ignored: Mutex<Vec<RelPath>>,
 }
 
 impl CollectingFsSink {
+    /// Todas las rutas recibidas (ignoradas por git incluidas).
     pub fn paths(&self) -> Vec<RelPath> {
         lock(&self.paths).clone()
+    }
+
+    /// Solo las que llegaron por `changed_ignored`.
+    pub fn ignored(&self) -> Vec<RelPath> {
+        lock(&self.ignored).clone()
     }
 
     pub fn contains(&self, rel: &str) -> bool {
@@ -98,6 +105,11 @@ impl CollectingFsSink {
 
 impl FsChangeSink for CollectingFsSink {
     fn changed(&self, paths: Vec<RelPath>) {
+        lock(&self.paths).extend(paths);
+    }
+
+    fn changed_ignored(&self, paths: Vec<RelPath>) {
+        lock(&self.ignored).extend(paths.iter().cloned());
         lock(&self.paths).extend(paths);
     }
 }

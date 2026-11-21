@@ -1,6 +1,6 @@
 //! Estado global: adaptadores compartidos y registro ventana ⇄ proyecto.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -48,6 +48,8 @@ pub struct AppState {
     pub registry: Mutex<Registry>,
     /// Salida de agente conectada a la terminal de cada ventana (una por ventana).
     pub attachments: Mutex<HashMap<String, Subscription>>,
+    /// Ventanas cuyo cierre debe confirmar la UI (ver `cmd::SET_CLOSE_GUARD`).
+    pub close_guards: Mutex<HashSet<String>>,
     pub git: Arc<CliGit>,
     pub fs: Arc<LocalFs>,
     pub store: Arc<JsonStore>,
@@ -58,6 +60,7 @@ impl AppState {
         Self {
             registry: Mutex::new(Registry::default()),
             attachments: Mutex::new(HashMap::new()),
+            close_guards: Mutex::new(HashSet::new()),
             git: Arc::new(CliGit::new()),
             fs: Arc::new(LocalFs::new()),
             store: Arc::new(JsonStore::new(data_dir, config_file)),
@@ -88,8 +91,22 @@ impl AppState {
         lock(&self.attachments).remove(label);
     }
 
+    pub fn set_close_guard(&self, label: &str, guard: bool) {
+        let mut guards = lock(&self.close_guards);
+        if guard {
+            guards.insert(label.to_owned());
+        } else {
+            guards.remove(label);
+        }
+    }
+
+    pub fn close_guarded(&self, label: &str) -> bool {
+        lock(&self.close_guards).contains(label)
+    }
+
     /// Al destruirse una ventana: suelta su terminal, detiene sus agentes y guarda.
     pub fn close_window(&self, label: &str) {
+        self.set_close_guard(label, false);
         self.detach(label);
         let session = self.registry().remove(label);
         if let Some(session) = session {

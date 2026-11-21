@@ -33,6 +33,13 @@ pub enum FileContent {
 /// Recibe lotes de rutas cambiadas (ya con debounce).
 pub trait FsChangeSink: Send + Sync {
     fn changed(&self, paths: Vec<RelPath>);
+
+    /// Cambios solo en rutas ignoradas por `.gitignore` (p. ej. `target/` durante
+    /// una compilación): cambian archivos pero no el estado git. Un adaptador puede
+    /// separarlas así; por defecto se tratan como cualquier otro cambio.
+    fn changed_ignored(&self, paths: Vec<RelPath>) {
+        self.changed(paths);
+    }
 }
 
 pub trait FsPort: Send + Sync {
