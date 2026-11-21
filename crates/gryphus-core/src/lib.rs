@@ -26,7 +26,7 @@ pub use error::{DomainError, DomainResult};
 pub use events::{DomainEvent, EventSink};
 pub use feature::Feature;
 pub use ids::{AgentId, FeatureId, ProjectId, WorktreeId};
-pub use names::{BranchName, FeatureName, NameError};
+pub use names::{AgentName, BranchName, FeatureName, NameError};
 pub use path::{PathError, RelPath};
 pub use project::Project;
 pub use worktree::Worktree;

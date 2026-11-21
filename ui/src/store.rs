@@ -40,6 +40,43 @@ pub enum SaveAnswer {
     Cancel,
 }
 
+/// Sobre qué se abrió el menú contextual.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MenuTarget {
+    Agent(u64),
+    /// Archivo o directorio del explorador.
+    Entry {
+        worktree: u64,
+        path: String,
+        is_dir: bool,
+    },
+    /// Zona vacía del explorador (pegar en la raíz).
+    ExplorerRoot {
+        worktree: u64,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextMenu {
+    pub x: i32,
+    pub y: i32,
+    pub target: MenuTarget,
+}
+
+/// Elemento que se está renombrando en línea.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RenameTarget {
+    Agent(u64),
+    Entry { worktree: u64, path: String },
+}
+
+/// Archivo o directorio copiado (worktree, ruta).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Clipboard {
+    pub worktree: u64,
+    pub path: String,
+}
+
 /// Confirmación pendiente (modal `app::ConfirmDialog`): "Cancelar" más una o
 /// varias opciones; la primera es la principal (Enter).
 pub struct ConfirmRequest {
@@ -81,6 +118,11 @@ pub struct Store {
     /// Número de la última petición de `get_project`: una respuesta más antigua que
     /// llega tarde no debe pisar el estado nuevo.
     project_req: StoredValue<u64>,
+    /// Features contraídas en el panel izquierdo.
+    pub collapsed: RwSignal<HashSet<u64>>,
+    pub menu: RwSignal<Option<ContextMenu>>,
+    pub renaming: RwSignal<Option<RenameTarget>>,
+    pub clipboard: RwSignal<Option<Clipboard>>,
 }
 
 impl Store {
@@ -107,7 +149,123 @@ impl Store {
             settings: RwSignal::new(Settings::default()),
             settings_open: RwSignal::new(false),
             project_req: StoredValue::new(0),
+            collapsed: RwSignal::new(HashSet::new()),
+            menu: RwSignal::new(None),
+            renaming: RwSignal::new(None),
+            clipboard: RwSignal::new(None),
         }
+    }
+
+    pub fn is_collapsed(&self, feature: u64) -> bool {
+        self.collapsed.with(|set| set.contains(&feature))
+    }
+
+    pub fn toggle_collapsed(&self, feature: u64) {
+        self.collapsed.update(|set| {
+            if !set.remove(&feature) {
+                set.insert(feature);
+            }
+        });
+    }
+
+    /// Abre el menú contextual en la posición del ratón (sin el menú nativo del navegador).
+    pub fn open_menu(&self, ev: &leptos::ev::MouseEvent, target: MenuTarget) {
+        ev.prevent_default();
+        ev.stop_propagation();
+        self.menu.set(Some(ContextMenu {
+            x: ev.client_x(),
+            y: ev.client_y(),
+            target,
+        }));
+    }
+
+    pub fn is_renaming(&self, target: &RenameTarget) -> bool {
+        self.renaming.with(|r| r.as_ref() == Some(target))
+    }
+
+    /// Termina el renombrado de `target`. Devuelve `false` si ya había terminado
+    /// (p. ej. el `blur` que llega después de pulsar Enter).
+    pub fn finish_renaming(&self, target: &RenameTarget) -> bool {
+        let current = self.renaming.with_untracked(|r| r.as_ref() == Some(target));
+        if current {
+            self.renaming.set(None);
+        }
+        current
+    }
+
+    /// Pestaña con cambios sin guardar en `path` o dentro de ella: renombrarla perdería
+    /// esos cambios (el documento del editor va ligado a la ruta).
+    pub fn dirty_under(&self, worktree: u64, path: &str) -> Option<OpenFile> {
+        self.dirty_files.with_untracked(|d| {
+            d.iter()
+                .find(|f| f.worktree == worktree && logic::rebase_path(&f.path, path, "").is_some())
+                .cloned()
+        })
+    }
+
+    /// Ajusta pestañas, carpetas expandidas y portapapeles tras renombrar `old` → `new`.
+    /// Las pestañas afectadas (sin cambios: ver [`Self::dirty_under`]) se recargan de la ruta nueva.
+    pub fn path_renamed(&self, worktree: u64, old: &str, new: &str) {
+        let rebase = |f: &OpenFile| {
+            (f.worktree == worktree)
+                .then(|| logic::rebase_path(&f.path, old, new))
+                .flatten()
+                .map(|path| OpenFile { worktree, path })
+                .unwrap_or_else(|| f.clone())
+        };
+        // Primero las pestañas: así el editor no reabre la ruta vieja al cambiar la activa.
+        self.open_files.update(|tabs| {
+            for tab in tabs.iter_mut() {
+                *tab = rebase(tab);
+            }
+        });
+        if let Some(active) = self.open_file.get_untracked() {
+            let moved = rebase(&active);
+            if moved != active {
+                self.open_file.set(Some(moved));
+            }
+        }
+        self.expanded.update(|set| {
+            *set = set
+                .drain()
+                .map(|(wt, p)| {
+                    let rebased = (wt == worktree)
+                        .then(|| logic::rebase_path(&p, old, new))
+                        .flatten();
+                    (wt, rebased.unwrap_or(p))
+                })
+                .collect();
+        });
+        self.clipboard.update(|c| {
+            if let Some(c) = c.as_mut().filter(|c| c.worktree == worktree) {
+                if let Some(p) = logic::rebase_path(&c.path, old, new) {
+                    c.path = p;
+                }
+            }
+        });
+        self.fs_tick.update(|t| *t += 1);
+        self.bump_git();
+    }
+
+    /// Pega el portapapeles dentro de `dir` y deja visible la copia.
+    pub fn paste(self, worktree: u64, dir: String) {
+        let Some(clip) = self.clipboard.get_untracked() else {
+            return;
+        };
+        spawn_local(async move {
+            match ipc::copy_path(clip.worktree, clip.path, worktree, dir.clone()).await {
+                Ok(_) => {
+                    if !dir.is_empty() {
+                        self.expanded.update(|set| {
+                            set.insert((worktree, dir));
+                        });
+                    }
+                    self.fs_tick.update(|t| *t += 1);
+                    self.bump_git();
+                }
+                Err(e) => self.report(e),
+            }
+        });
     }
 
     /// Pide confirmación con el modal de la app. Una petición nueva cancela la anterior.

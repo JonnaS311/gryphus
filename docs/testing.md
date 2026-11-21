@@ -15,7 +15,7 @@ Todo el desarrollo es **orientado a pruebas (TDD)**: primero la prueba que falla
 | Pegamento JS | `ui/js/test` | Decodificador del formato binario de salida | `node --test` | ms |
 | E2E | `e2e/` | App real (WebView) completa, flujos de usuario | Rust + `fantoccini` + `tauri-driver` | s |
 
-Estado actual: **235 pruebas** en `cargo test --workspace`, todas en verde. Incluyen las 3 e2e, que sin `GRYPHUS_E2E=1` se cuentan pero no hacen nada. Aparte hay 4 pruebas de JS. Las pruebas de componentes con `wasm-bindgen-test` previstas al inicio se sustituyeron por e2e contra la app real (ver [ui.md](architecture/ui.md#pruebas)).
+Estado actual: **279 pruebas** en `cargo test --workspace`, todas en verde. Incluyen las e2e (6 flujos más las de rendimiento), que sin `GRYPHUS_E2E=1` se cuentan pero no hacen nada. Aparte hay 4 pruebas de JS. Las pruebas de componentes con `wasm-bindgen-test` previstas al inicio se sustituyeron por e2e contra la app real (ver [ui.md](architecture/ui.md#pruebas)).
 
 ## Pruebas de contrato
 
@@ -36,11 +36,11 @@ gryphus_testkit::git_contract!(Harness::new);
 | Suite | Macro | Casos | Semántica que fija |
 |---|---|---|---|
 | `GitPort` | `git_contract!` | 16 | worktrees y branches, errores `AlreadyExists`/`Conflict`/`NotFound`, status con untracked/modified/deleted, diff contra HEAD y contra merge-base, **diff incluye archivos sin seguimiento**, `DiffLine` sin salto de línea |
-| `FsPort` | `fs_contract!` | 11 | orden (directorios primero, sin distinguir mayúsculas), `.git` oculto, `.gitignore`, `Text`/`Binary`/`TooLarge`, escritura que crea padres, watcher con cancelación |
+| `FsPort` | `fs_contract!` | 15 | orden (directorios primero, sin distinguir mayúsculas), `.git` oculto, `.gitignore`, `Text`/`Binary`/`TooLarge`, escritura que crea padres, renombrar y copiar sin sobrescribir, watcher con cancelación |
 | `StorePort` | `store_contract!` | 6 | ida y vuelta, sobrescritura, config por defecto, `Corrupted` si el JSON es ilegible o viola invariantes |
 | `AgentRuntimePort` | `agents_contract!` | 10 | Scrollback antes que Data, eco, código de salida, `on_exit` exactamente una vez, flood completo y en orden, relanzar, `Unavailable`, `NotFound` |
 
-Estado actual: los 43 casos pasan **contra los fakes y contra los adaptadores reales** (`CliGit`, `LocalFs`, `JsonStore`, `PtyRuntime` con ConPTY).
+Estado actual: los 47 casos pasan **contra los fakes y contra los adaptadores reales** (`CliGit`, `LocalFs`, `JsonStore`, `PtyRuntime` con ConPTY).
 
 La eficacia de los contratos está comprobada: al quitar del `FakeGit` el reporte de archivos borrados, falla exactamente `status_reports_untracked_modified_and_deleted` con un diff claro.
 
@@ -97,6 +97,10 @@ Corren contra el binario real con config que apunta los tres proveedores a `fake
 7. Detener agente → estado `Exited`; reiniciar → vuelve a `Running`.
 8. Intentar eliminar la feature con agente activo → error visible; tras detenerlo, se elimina.
 9. Cerrar y reabrir → features y agentes persistidos (agentes en `Exited`).
+10. Configuración → agente inicial: crear una feature lanza ese agente; con `Ninguno` no se lanza.
+11. Clic en la cabecera de una feature la contrae y expande; cada feature tiene un color distinto.
+12. Clic derecho en un agente → renombrar; los agentes nacen con un nombre (no `proveedor #id`).
+13. Explorador con clic derecho: renombrar (Escape cancela; una carpeta renombrada sigue expandida y su pestaña del editor pasa a la ruta nueva; con cambios sin guardar no se renombra), copiar y pegar (`nombre copia.ext` si choca; dentro de una carpeta).
 
 Los 9 flujos se cubren con 3 pruebas en `e2e/tests/flows.rs`: `open_project_once_per_window` (1-2), `feature_agent_editor_and_diff` (3-8) y `state_persists_across_restarts` (9). **Estado: pasan en Windows 11 (WebView2 158) en ~16 s.**
 

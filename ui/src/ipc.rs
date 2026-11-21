@@ -71,6 +71,10 @@ pub async fn remove_agent(agent: u64) -> IpcResult<()> {
     invoke(cmd::REMOVE_AGENT, Some(&AgentReq { agent })).await
 }
 
+pub async fn rename_agent(agent: u64, name: String) -> IpcResult<()> {
+    invoke(cmd::RENAME_AGENT, Some(&RenameAgentReq { agent, name })).await
+}
+
 pub async fn agent_input(agent: u64, data: String) -> IpcResult<()> {
     invoke(cmd::AGENT_INPUT, Some(&AgentInputReq { agent, data })).await
 }
@@ -106,6 +110,38 @@ pub async fn write_file(worktree: u64, path: String, content: String) -> IpcResu
             worktree,
             path,
             content,
+        }),
+    )
+    .await
+}
+
+/// Devuelve la ruta nueva.
+pub async fn rename_path(worktree: u64, path: String, new_name: String) -> IpcResult<String> {
+    invoke(
+        cmd::RENAME_PATH,
+        Some(&RenamePathReq {
+            worktree,
+            path,
+            new_name,
+        }),
+    )
+    .await
+}
+
+/// Pega una copia de `from` dentro de `to_dir`; devuelve la ruta creada.
+pub async fn copy_path(
+    from_worktree: u64,
+    from: String,
+    to_worktree: u64,
+    to_dir: String,
+) -> IpcResult<String> {
+    invoke(
+        cmd::COPY_PATH,
+        Some(&CopyPathReq {
+            from_worktree,
+            from,
+            to_worktree,
+            to_dir,
         }),
     )
     .await

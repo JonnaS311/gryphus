@@ -96,7 +96,12 @@ input:focus, select:focus { outline: 1px solid var(--accent); outline-offset: -1
 .new-feature { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
 .feature { border-bottom: 1px solid var(--border); padding-bottom: 6px; }
 .feature.selected { background: rgba(106, 167, 255, 0.05); }
-.feature-header { display: flex; align-items: center; padding: 6px 4px 2px 12px; cursor: pointer; }
+.feature-header { display: flex; align-items: center; gap: 4px; margin: 6px 6px 2px; padding: 4px 4px 4px 6px; border-radius: 4px; border-left: 3px solid hsl(var(--feature-hue, 210) 70% 62%); background: hsl(var(--feature-hue, 210) 70% 55% / 0.14); cursor: pointer; user-select: none; }
+.feature-header:hover { background: hsl(var(--feature-hue, 210) 70% 55% / 0.22); }
+.feature.selected .feature-header { background: hsl(var(--feature-hue, 210) 70% 55% / 0.28); }
+.feature.collapsed { padding-bottom: 0; }
+.feature-header .chev { color: hsl(var(--feature-hue, 210) 70% 72%); }
+.feature-count { font-size: 11px; color: var(--muted); padding: 0 6px; border-radius: 8px; background: var(--panel-2); }
 .feature-name { font-weight: 600; flex: 1; }
 .worktrees, .agents { list-style: none; margin: 0; padding: 0; }
 .worktree, .agent { display: flex; align-items: center; gap: 6px; padding: 3px 8px 3px 20px; cursor: pointer; }
@@ -105,7 +110,8 @@ input:focus, select:focus { outline: 1px solid var(--accent); outline-offset: -1
 .worktree.active { color: var(--text); }
 .glyph { color: var(--accent); }
 .agent.selected { background: var(--panel-2); box-shadow: inset 2px 0 var(--accent); }
-.agent-name { font-family: var(--mono); font-size: 12px; }
+.agent-name { font-size: 12.5px; min-width: 0; }
+.agent-provider { font-family: var(--mono); font-size: 11px; flex: none; }
 .agent-status { font-size: 11px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .actions { display: flex; }
 .new-agent { display: flex; gap: 4px; padding: 4px 8px 0 20px; }
@@ -192,3 +198,10 @@ input:focus, select:focus { outline: 1px solid var(--accent); outline-offset: -1
 .welcome h1 { margin: 0; font-size: 32px; letter-spacing: 0.02em; }
 .welcome form input { width: 380px; }
 .toast { position: fixed; right: 16px; bottom: 36px; max-width: 480px; background: #3a1d22; border: 1px solid var(--red); color: var(--text); padding: 10px 12px; border-radius: 6px; cursor: pointer; z-index: 10; }
+
+/* Menú contextual y renombrar en línea */
+.context-menu { position: fixed; z-index: 40; min-width: 180px; list-style: none; margin: 0; padding: 4px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); }
+.context-menu button { display: block; width: 100%; background: none; border: none; border-radius: 4px; padding: 5px 10px; text-align: left; color: var(--text); }
+.context-menu button:hover:not(:disabled) { background: var(--accent); color: #0b1220; }
+.context-menu button:disabled { color: var(--muted); opacity: 0.6; }
+.rename-input { flex: 1; min-width: 0; padding: 0 4px; font: inherit; height: 20px; }

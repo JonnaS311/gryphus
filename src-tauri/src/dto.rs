@@ -58,6 +58,10 @@ pub fn project(p: &Project, config: &Config, available: impl Fn(&str) -> bool) -
             .iter()
             .map(|a| AgentDto {
                 id: a.id().get(),
+                name: a.name().map_or_else(
+                    || format!("{} #{}", a.provider(), a.id().get()),
+                    |n| n.as_str().to_owned(),
+                ),
                 feature: a.feature().get(),
                 worktree: a.worktree().get(),
                 provider: a.provider().as_str().to_owned(),
@@ -250,6 +254,7 @@ mod tests {
         assert_eq!(dto.features[0].name, "login");
         assert_eq!(dto.worktrees[0].branch.as_deref(), Some("main"));
         assert_eq!(dto.agents[0].provider, "codex");
+        assert!(!dto.agents[0].name.is_empty());
         assert_eq!(dto.agents[0].status, AgentStatusDto::Starting);
         let available: Vec<_> = dto
             .providers

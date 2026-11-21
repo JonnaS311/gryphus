@@ -25,6 +25,7 @@ pub mod cmd {
     pub const STOP_AGENT: &str = "stop_agent";
     pub const RESTART_AGENT: &str = "restart_agent";
     pub const REMOVE_AGENT: &str = "remove_agent";
+    pub const RENAME_AGENT: &str = "rename_agent";
     pub const AGENT_INPUT: &str = "agent_input";
     pub const AGENT_RESIZE: &str = "agent_resize";
     pub const ATTACH_AGENT: &str = "attach_agent";
@@ -32,6 +33,10 @@ pub mod cmd {
     pub const LIST_DIR: &str = "list_dir";
     pub const READ_FILE: &str = "read_file";
     pub const WRITE_FILE: &str = "write_file";
+    /// Devuelve la ruta nueva.
+    pub const RENAME_PATH: &str = "rename_path";
+    /// Pega una copia; devuelve la ruta creada.
+    pub const COPY_PATH: &str = "copy_path";
     pub const GIT_STATUS: &str = "git_status";
     pub const GIT_DIFF: &str = "git_diff";
     pub const GIT_OVERVIEW: &str = "git_overview";
@@ -108,6 +113,8 @@ pub struct WorktreeDto {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentDto {
     pub id: u64,
+    /// Nombre visible (editable).
+    pub name: String,
     pub feature: u64,
     pub worktree: u64,
     pub provider: String,
@@ -201,6 +208,29 @@ pub struct PathReq {
     pub worktree: u64,
     /// Relativa al worktree; `""` es la raíz.
     pub path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RenameAgentReq {
+    pub agent: u64,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RenamePathReq {
+    pub worktree: u64,
+    pub path: String,
+    /// Solo el nombre nuevo (un componente), no una ruta.
+    pub new_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CopyPathReq {
+    pub from_worktree: u64,
+    pub from: String,
+    pub to_worktree: u64,
+    /// Directorio destino; "" es la raíz.
+    pub to_dir: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -399,6 +429,7 @@ mod tests {
             cmd::STOP_AGENT,
             cmd::RESTART_AGENT,
             cmd::REMOVE_AGENT,
+            cmd::RENAME_AGENT,
             cmd::AGENT_INPUT,
             cmd::AGENT_RESIZE,
             cmd::ATTACH_AGENT,
@@ -406,6 +437,8 @@ mod tests {
             cmd::LIST_DIR,
             cmd::READ_FILE,
             cmd::WRITE_FILE,
+            cmd::RENAME_PATH,
+            cmd::COPY_PATH,
             cmd::GIT_STATUS,
             cmd::GIT_DIFF,
             cmd::GIT_OVERVIEW,

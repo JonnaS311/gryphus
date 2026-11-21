@@ -290,3 +290,38 @@ fn check_invariants_detects_corrupted_state() {
         Err(DomainError::Invariant(_))
     ));
 }
+
+// ── Nombres de agente ────────────────────────────────────────────────────────
+
+#[test]
+fn agents_get_distinct_default_names_and_can_be_renamed() {
+    let (mut p, _, a, _) = project();
+    let (f, first) = feature_with_agent(&mut p, a);
+    let second = p.add_agent(f, a, ProviderId::Codex).unwrap();
+    let name_of = |p: &Project, id| p.agent(id).unwrap().name().unwrap().as_str().to_owned();
+    assert_ne!(name_of(&p, first), name_of(&p, second));
+
+    p.rename_agent(first, gryphus_core::AgentName::parse("Revisor").unwrap())
+        .unwrap();
+    assert_eq!(name_of(&p, first), "Revisor");
+    assert!(matches!(
+        p.rename_agent(
+            gryphus_core::AgentId::from_raw(999),
+            gryphus_core::AgentName::parse("x").unwrap()
+        ),
+        Err(DomainError::AgentNotFound(_))
+    ));
+    assert!(!p.name_unnamed_agents(), "todos tienen nombre");
+}
+
+#[test]
+fn legacy_agents_without_name_get_one() {
+    let (mut p, _, a, _) = project();
+    let (_, agent) = feature_with_agent(&mut p, a);
+    let mut json: serde_json::Value = serde_json::to_value(&p).unwrap();
+    json["agents"][0].as_object_mut().unwrap().remove("name");
+    let mut legacy: Project = serde_json::from_value(json).unwrap();
+    assert!(legacy.agent(agent).unwrap().name().is_none());
+    assert!(legacy.name_unnamed_agents());
+    assert!(legacy.agent(agent).unwrap().name().is_some());
+}

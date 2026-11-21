@@ -23,6 +23,7 @@ pub const END: &str = "\u{E010}";
 pub const TAB: &str = "\u{E004}";
 pub const SHIFT: &str = "\u{E008}";
 pub const RELEASE: &str = "\u{E000}";
+pub const ESCAPE: &str = "\u{E00C}";
 
 pub fn enabled() -> bool {
     std::env::var("GRYPHUS_E2E").is_ok_and(|v| v == "1")
@@ -257,6 +258,71 @@ impl App {
             .click()
             .await
             .unwrap_or_else(|e| panic!("clic en {css}: {e}"));
+    }
+
+    /// Clic derecho (evento `contextmenu`) sobre el primer elemento que cumple `css`.
+    pub async fn right_click(&self, css: &str) {
+        self.wait_css(css).await;
+        self.script(
+            "const el = document.querySelector(arguments[0]);
+             const r = el.getBoundingClientRect();
+             el.dispatchEvent(new MouseEvent('contextmenu', {
+                 bubbles: true, cancelable: true, button: 2,
+                 clientX: r.left + 10, clientY: r.top + r.height / 2 }));",
+            vec![json!(css)],
+        )
+        .await;
+        self.wait_css(".context-menu").await;
+    }
+
+    /// Elige `value` en un `<select>` como lo haría el usuario (dispara `change`).
+    pub async fn select_value(&self, css: &str, value: &str) {
+        self.wait_css(css).await;
+        self.script(
+            "const el = document.querySelector(arguments[0]);
+             el.value = arguments[1];
+             el.dispatchEvent(new Event('change', { bubbles: true }));",
+            vec![json!(css), json!(value)],
+        )
+        .await;
+    }
+
+    /// Estilo calculado de `prop` en el primer elemento que cumple `css`.
+    pub async fn computed_style(&self, css: &str, prop: &str) -> String {
+        self.wait_css(css).await;
+        self.script(
+            "return getComputedStyle(document.querySelector(arguments[0]))
+                 .getPropertyValue(arguments[1]);",
+            vec![json!(css), json!(prop)],
+        )
+        .await
+        .as_str()
+        .unwrap_or_default()
+        .to_owned()
+    }
+
+    /// Espera a que el campo de renombrar dentro de `scope` tenga el foco.
+    pub async fn wait_rename_focus(&self, scope: &str) {
+        let input = format!("{scope} .rename-input");
+        self.wait_css(&input).await;
+        wait_for("foco en el campo de renombrar", || async {
+            self.script(
+                "return document.activeElement === document.querySelector(arguments[0]);",
+                vec![json!(input)],
+            )
+            .await
+                == json!(true)
+        })
+        .await;
+    }
+
+    /// Escribe en el campo de renombrar con foco (reemplaza el texto) y confirma.
+    pub async fn rename_to(&self, scope: &str, name: &str) {
+        self.wait_rename_focus(scope).await;
+        let input = format!("{scope} .rename-input");
+        self.type_active(&format!("{CTRL}a{RELEASE}{name}{ENTER}"))
+            .await;
+        self.wait_gone(&input).await;
     }
 
     pub async fn click_xpath(&self, xpath: &str) {

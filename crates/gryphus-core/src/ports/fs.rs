@@ -48,5 +48,16 @@ pub trait FsPort: Send + Sync {
     fn read_file(&self, root: &Path, file: &RelPath) -> PortResult<FileContent>;
     /// Escritura atómica (archivo temporal + rename).
     fn write_file(&self, root: &Path, file: &RelPath, content: &[u8]) -> PortResult<()>;
+    /// Renombra o mueve dentro del mismo worktree. `AlreadyExists` si `to` existe.
+    fn rename(&self, root: &Path, from: &RelPath, to: &RelPath) -> PortResult<()>;
+    /// Copia un archivo o un directorio completo, posiblemente entre worktrees.
+    /// `AlreadyExists` si `to` existe; el directorio padre de `to` debe existir.
+    fn copy(
+        &self,
+        from_root: &Path,
+        from: &RelPath,
+        to_root: &Path,
+        to: &RelPath,
+    ) -> PortResult<()>;
     fn watch(&self, root: &Path, sink: Arc<dyn FsChangeSink>) -> PortResult<Subscription>;
 }

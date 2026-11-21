@@ -5,6 +5,8 @@
 //!   distinguir mayúsculas; nunca muestra `.git`; marca lo ignorado por `.gitignore`.
 //! - `read_file`: `Text` si es UTF-8 sin NUL; `Binary` si no; `TooLarge` si supera el límite.
 //! - `write_file`: crea los directorios padre que falten.
+//! - `rename` / `copy`: archivos o directorios completos; nunca sobrescriben
+//!   (`AlreadyExists`), no aceptan la raíz ni mover/copiar algo dentro de sí mismo.
 //! - `watch`: reporta cambios externos en ≤ 3 s; soltar la suscripción los detiene.
 
 use std::path::PathBuf;
@@ -148,6 +150,81 @@ pub fn write_file_overwrites<H: FsHarness>(h: &H) {
     assert_eq!(
         h.port().read_file(&h.root(), &path).unwrap(),
         FileContent::Text("dos".into())
+    );
+}
+
+pub fn rename_moves_files_and_directories<H: FsHarness>(h: &H) {
+    h.write_raw("a.txt", b"a");
+    h.write_raw("dir/sub/x.txt", b"x");
+    h.create_dir("otro");
+    let (fs, root) = (h.port(), h.root());
+    fs.rename(&root, &rel("a.txt"), &rel("b.txt")).unwrap();
+    fs.rename(&root, &rel("dir"), &rel("otro/movido")).unwrap();
+    assert_eq!(
+        fs.read_file(&root, &rel("b.txt")).unwrap(),
+        FileContent::Text("a".into())
+    );
+    assert_eq!(
+        fs.read_file(&root, &rel("otro/movido/sub/x.txt")).unwrap(),
+        FileContent::Text("x".into())
+    );
+    assert_kind(fs.read_file(&root, &rel("a.txt")), PortErrorKind::NotFound);
+    let top: Vec<_> = names(h, "").into_iter().map(|(n, _)| n).collect();
+    assert_eq!(top, ["otro", "b.txt"]);
+}
+
+pub fn rename_errors<H: FsHarness>(h: &H) {
+    h.write_raw("a.txt", b"a");
+    h.write_raw("b.txt", b"b");
+    h.create_dir("dir");
+    let (fs, root) = (h.port(), h.root());
+    assert_kind(
+        fs.rename(&root, &rel("a.txt"), &rel("b.txt")),
+        PortErrorKind::AlreadyExists,
+    );
+    assert_kind(
+        fs.rename(&root, &rel("nada"), &rel("c.txt")),
+        PortErrorKind::NotFound,
+    );
+    assert_kind(
+        fs.rename(&root, &rel("dir"), &rel("dir/dentro")),
+        PortErrorKind::InvalidInput,
+    );
+    assert_kind(
+        fs.rename(&root, &RelPath::root(), &rel("x")),
+        PortErrorKind::InvalidInput,
+    );
+}
+
+pub fn copy_duplicates_files_and_directories<H: FsHarness>(h: &H) {
+    h.write_raw("a.txt", b"a");
+    h.write_raw("dir/sub/x.txt", b"x");
+    let (fs, root) = (h.port(), h.root());
+    fs.copy(&root, &rel("a.txt"), &root, &rel("dir/a.txt"))
+        .unwrap();
+    fs.copy(&root, &rel("dir"), &root, &rel("copia")).unwrap();
+    let read = |p: &str| fs.read_file(&root, &rel(p)).unwrap();
+    assert_eq!(read("a.txt"), FileContent::Text("a".into()));
+    assert_eq!(read("dir/a.txt"), FileContent::Text("a".into()));
+    assert_eq!(read("copia/a.txt"), FileContent::Text("a".into()));
+    assert_eq!(read("copia/sub/x.txt"), FileContent::Text("x".into()));
+}
+
+pub fn copy_errors<H: FsHarness>(h: &H) {
+    h.write_raw("a.txt", b"a");
+    h.create_dir("dir");
+    let (fs, root) = (h.port(), h.root());
+    assert_kind(
+        fs.copy(&root, &rel("a.txt"), &root, &rel("a.txt")),
+        PortErrorKind::AlreadyExists,
+    );
+    assert_kind(
+        fs.copy(&root, &rel("nada"), &root, &rel("b.txt")),
+        PortErrorKind::NotFound,
+    );
+    assert_kind(
+        fs.copy(&root, &rel("dir"), &root, &rel("dir/dentro")),
+        PortErrorKind::InvalidInput,
     );
 }
 

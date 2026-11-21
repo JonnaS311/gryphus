@@ -129,6 +129,59 @@ impl FakeFs {
         Ok(())
     }
 
+    /// Copia (`remove = false`) o mueve el nodo `from` y todo lo que cuelga de él.
+    fn transfer(&self, from: &RelPath, to: &RelPath, remove: bool) -> PortResult<()> {
+        if from.is_root() || to.is_root() {
+            return err(PortErrorKind::InvalidInput, "la raíz no se puede mover");
+        }
+        if to.starts_with(from) && to != from {
+            return err(
+                PortErrorKind::InvalidInput,
+                format!("{from} no se puede copiar ni mover dentro de sí mismo"),
+            );
+        }
+        {
+            let mut nodes = lock(&self.inner.nodes);
+            if !nodes.contains_key(from.as_str()) {
+                return err(PortErrorKind::NotFound, format!("{from} no existe"));
+            }
+            let parent = to.parent().unwrap_or_default();
+            if !parent.is_root() && !matches!(nodes.get(parent.as_str()), Some(Node::Dir)) {
+                return err(PortErrorKind::NotFound, format!("{parent} no existe"));
+            }
+            if to == from && remove {
+                return Ok(());
+            }
+            if nodes.contains_key(to.as_str()) {
+                return err(PortErrorKind::AlreadyExists, format!("{to} ya existe"));
+            }
+            let moved: Vec<String> = nodes
+                .keys()
+                .filter(|k| RelPath::parse(k).is_ok_and(|k| k.starts_with(from)))
+                .cloned()
+                .collect();
+            for key in moved {
+                let rest = &key[from.as_str().len()..];
+                let target = format!("{}{rest}", to.as_str());
+                let node = if remove {
+                    nodes.remove(&key).expect("clave listada")
+                } else {
+                    match &nodes[&key] {
+                        Node::Dir => Node::Dir,
+                        Node::File(b) => Node::File(b.clone()),
+                    }
+                };
+                nodes.insert(target, node);
+            }
+        }
+        let mut changed = vec![to.clone()];
+        if remove {
+            changed.push(from.clone());
+        }
+        self.notify(changed);
+        Ok(())
+    }
+
     fn notify(&self, paths: Vec<RelPath>) {
         let watchers: Vec<_> = lock(&self.inner.watchers)
             .iter()
@@ -245,6 +298,25 @@ impl FsPort for FakeFs {
         self.inner.fail.check()?;
         self.check_root(root)?;
         self.insert_file(file, content)
+    }
+
+    fn rename(&self, root: &Path, from: &RelPath, to: &RelPath) -> PortResult<()> {
+        self.inner.fail.check()?;
+        self.check_root(root)?;
+        self.transfer(from, to, true)
+    }
+
+    fn copy(
+        &self,
+        from_root: &Path,
+        from: &RelPath,
+        to_root: &Path,
+        to: &RelPath,
+    ) -> PortResult<()> {
+        self.inner.fail.check()?;
+        self.check_root(from_root)?;
+        self.check_root(to_root)?;
+        self.transfer(from, to, false)
     }
 
     fn watch(&self, root: &Path, sink: Arc<dyn FsChangeSink>) -> PortResult<Subscription> {
