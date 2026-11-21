@@ -1,4 +1,4 @@
-﻿# Gryphus
+# Gryphus
 
 [![CI](https://github.com/JonnaS311/gryphus/actions/workflows/ci.yml/badge.svg)](https://github.com/JonnaS311/gryphus/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/JonnaS311/gryphus?include_prereleases&sort=semver)](https://github.com/JonnaS311/gryphus/releases)

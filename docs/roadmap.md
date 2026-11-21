@@ -1,4 +1,4 @@
-﻿# Roadmap de implementación
+# Roadmap de implementación
 
 Cada hito termina con su suite de pruebas en verde y la documentación actualizada. El orden va de adentro hacia afuera: dominio → adaptadores → IPC → UI.
 
