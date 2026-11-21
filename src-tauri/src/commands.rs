@@ -273,6 +273,19 @@ pub async fn remove_agent(
     .await
 }
 
+#[tauri::command]
+pub async fn rename_agent(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    req: RenameAgentReq,
+) -> CmdResult<()> {
+    with_session(&state, &window, move |s| {
+        s.rename_agent(AgentId::from_raw(req.agent), &req.name)
+            .map_err(dto::error)
+    })
+    .await
+}
+
 /// Entrada de teclado: camino caliente, sin hilo bloqueante (escribir en la PTY es inmediato).
 #[tauri::command]
 pub fn agent_input(
@@ -376,6 +389,39 @@ pub async fn write_file(
             &req.path,
             req.content.as_bytes(),
         )
+        .map_err(dto::error)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn rename_path(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    req: RenamePathReq,
+) -> CmdResult<String> {
+    with_session(&state, &window, move |s| {
+        s.rename_path(WorktreeId::from_raw(req.worktree), &req.path, &req.new_name)
+            .map(String::from)
+            .map_err(dto::error)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn copy_path(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    req: CopyPathReq,
+) -> CmdResult<String> {
+    with_session(&state, &window, move |s| {
+        s.copy_path(
+            WorktreeId::from_raw(req.from_worktree),
+            &req.from,
+            WorktreeId::from_raw(req.to_worktree),
+            &req.to_dir,
+        )
+        .map(String::from)
         .map_err(dto::error)
     })
     .await

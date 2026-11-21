@@ -9,7 +9,8 @@ use crate::icons;
 use crate::ipc;
 use crate::layout::CenterView;
 use crate::logic;
-use crate::store::{OpenFile, Store};
+use crate::panels::InlineRename;
+use crate::store::{MenuTarget, OpenFile, RenameTarget, Store};
 
 #[component]
 pub fn Explorer() -> impl IntoView {
@@ -25,7 +26,14 @@ pub fn Explorer() -> impl IntoView {
     };
 
     view! {
-        <aside class="pane pane-right">
+        <aside
+            class="pane pane-right"
+            on:contextmenu=move |ev| {
+                if let Some(worktree) = store.active_worktree.get_untracked() {
+                    store.open_menu(&ev, MenuTarget::ExplorerRoot { worktree });
+                }
+            }
+        >
             <header class="pane-header">
                 <h2 class="pane-title">"Explorador"</h2>
                 <span class="muted ellipsis" title=label>{label}</span>
@@ -86,12 +94,57 @@ fn mark_class(state: FileStateDto) -> &'static str {
     }
 }
 
+/// Nombre de la fila, o el campo de renombrar si está en edición.
+fn entry_name(worktree: u64, path: String, name: String, is_file: bool) -> impl IntoView {
+    let store = expect_context::<Store>();
+    let target = RenameTarget::Entry {
+        worktree,
+        path: path.clone(),
+    };
+    let renaming = {
+        let t = target.clone();
+        move || store.is_renaming(&t)
+    };
+    let commit = move |new_name: String| {
+        let old = path.clone();
+        spawn_local(async move {
+            match ipc::rename_path(worktree, old.clone(), new_name).await {
+                Ok(new) => store.path_renamed(worktree, &old, &new),
+                Err(e) => store.report(e),
+            }
+        });
+    };
+    view! {
+        <Show
+            when=renaming
+            fallback={
+                let name = name.clone();
+                move || view! { <span class="name">{name.clone()}</span> }
+            }
+        >
+            <InlineRename initial=name.clone() target=target.clone() is_file on_commit=commit.clone()/>
+        </Show>
+    }
+}
+
 #[component]
 fn TreeEntry(worktree: u64, entry: DirEntryDto, parent: String, depth: usize) -> impl IntoView {
     let store = expect_context::<Store>();
     let full = logic::join_path(&parent, &entry.name);
     let padding = format!("{}px", 8 + depth * 12);
     let name = entry.name.clone();
+    let menu_path = full.clone();
+    let is_dir = entry.kind == EntryKindDto::Dir;
+    let on_menu = move |ev: leptos::ev::MouseEvent| {
+        store.open_menu(
+            &ev,
+            MenuTarget::Entry {
+                worktree,
+                path: menu_path.clone(),
+                is_dir,
+            },
+        )
+    };
 
     match entry.kind {
         EntryKindDto::Dir => {
@@ -109,7 +162,9 @@ fn TreeEntry(worktree: u64, entry: DirEntryDto, parent: String, depth: usize) ->
                         class="tree-row dir"
                         class:ignored=entry.ignored
                         style:padding-left=padding
+                        data-path=full.clone()
                         on:click=move |_| store.toggle_expanded(worktree, &toggle_key)
+                        on:contextmenu=on_menu
                     >
                         <span class="chev">{move || if chev_open() { "▾" } else { "▸" }}</span>
                         <img
@@ -123,7 +178,7 @@ fn TreeEntry(worktree: u64, entry: DirEntryDto, parent: String, depth: usize) ->
                                 }
                             }
                         />
-                        <span class="name">{name}</span>
+                        {entry_name(worktree, full.clone(), name, false)}
                         <Show when=changed>
                             <span class="mark modified">"•"</span>
                         </Show>
@@ -159,6 +214,7 @@ fn TreeEntry(worktree: u64, entry: DirEntryDto, parent: String, depth: usize) ->
                         }
                         style:padding-left=padding
                         data-path=full.clone()
+                        on:contextmenu=on_menu
                         on:click=move |_| {
                             store
                                 .open_file
@@ -183,7 +239,7 @@ fn TreeEntry(worktree: u64, entry: DirEntryDto, parent: String, depth: usize) ->
                                 }
                             }
                         />
-                        <span class="name">{name}</span>
+                        {entry_name(worktree, full.clone(), name, true)}
                         {move || {
                             mark()
                                 .map(|m| {

@@ -101,6 +101,10 @@ macro_rules! fs_contract {
             read_file_errors,
             write_file_round_trips_and_creates_parents,
             write_file_overwrites,
+            rename_moves_files_and_directories,
+            rename_errors,
+            copy_duplicates_files_and_directories,
+            copy_errors,
             watch_reports_external_changes,
             dropping_the_subscription_stops_events,
         );

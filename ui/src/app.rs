@@ -7,7 +7,7 @@ use leptos::task::spawn_local;
 use crate::bridge::tauri::listen;
 use crate::ipc;
 use crate::layout::CenterView;
-use crate::panels::{AgentsPanel, Explorer, Navbar, StatusBar};
+use crate::panels::{AgentsPanel, ContextMenuHost, Explorer, Navbar, StatusBar};
 use crate::store::Store;
 use crate::views::{MainView, Welcome};
 
@@ -60,6 +60,7 @@ pub fn App() -> impl IntoView {
             </main>
         </div>
         <ConfirmDialog/>
+        <ContextMenuHost/>
         <ErrorToast/>
     }
 }

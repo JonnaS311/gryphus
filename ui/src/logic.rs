@@ -64,6 +64,37 @@ pub fn join_path(dir: &str, name: &str) -> String {
     }
 }
 
+/// Directorio que contiene `path` (`""` es la raíz).
+pub fn parent_dir(path: &str) -> &str {
+    path.rsplit_once('/').map_or("", |(dir, _)| dir)
+}
+
+/// Si `path` es `old` o está dentro de él, la ruta equivalente bajo `new`.
+pub fn rebase_path(path: &str, old: &str, new: &str) -> Option<String> {
+    if path == old {
+        return Some(new.to_owned());
+    }
+    path.strip_prefix(old)
+        .filter(|rest| rest.starts_with('/'))
+        .map(|rest| format!("{new}{rest}"))
+}
+
+/// Al renombrar un archivo se preselecciona el nombre sin extensión (como VS Code).
+/// En unidades UTF-16, que es lo que espera `setSelectionRange`.
+pub fn rename_selection(name: &str, is_file: bool) -> u32 {
+    let end = match name.rfind('.') {
+        Some(i) if is_file && i > 0 => &name[..i],
+        _ => name,
+    };
+    end.encode_utf16().count() as u32
+}
+
+/// Tono (HSL) de una feature según su posición: las contiguas nunca se repiten.
+pub fn feature_hue(index: usize) -> u16 {
+    const HUES: [u16; 8] = [210, 140, 30, 280, 350, 180, 55, 250];
+    HUES[index % HUES.len()]
+}
+
 pub fn file_mark(statuses: &[FileStatusDto], path: &str) -> Option<FileStateDto> {
     statuses.iter().find(|s| s.path == path).map(|s| s.state)
 }
@@ -129,6 +160,7 @@ mod tests {
             ],
             agents: vec![AgentDto {
                 id: 20,
+                name: "Nova".into(),
                 feature: 10,
                 worktree: 2,
                 provider: "claude".into(),
@@ -180,6 +212,24 @@ mod tests {
         assert_eq!(file_mark(&st, "src/a.rs"), Some(FileStateDto::Modified));
         assert!(dir_changed(&st, "src"));
         assert!(!dir_changed(&st, "sr"), "no confunde prefijos");
+    }
+
+    #[test]
+    fn rename_helpers() {
+        assert_eq!(parent_dir("src/bin/a.rs"), "src/bin");
+        assert_eq!(parent_dir("a.rs"), "");
+        assert_eq!(
+            rebase_path("src/a.rs", "src", "lib").as_deref(),
+            Some("lib/a.rs")
+        );
+        assert_eq!(rebase_path("src", "src", "lib").as_deref(), Some("lib"));
+        assert_eq!(rebase_path("srcx/a.rs", "src", "lib"), None);
+        assert_eq!(rename_selection("main.rs", true), 4);
+        assert_eq!(rename_selection(".env", true), 4);
+        assert_eq!(rename_selection("ñandú.txt", true), 5);
+        assert_eq!(rename_selection("v1.2", false), 4);
+        assert_ne!(feature_hue(0), feature_hue(1));
+        assert_eq!(feature_hue(0), feature_hue(8));
     }
 
     #[test]

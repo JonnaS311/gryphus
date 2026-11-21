@@ -21,6 +21,43 @@ pub struct OpenFile {
     pub path: String,
 }
 
+/// Sobre qué se abrió el menú contextual.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MenuTarget {
+    Agent(u64),
+    /// Archivo o directorio del explorador.
+    Entry {
+        worktree: u64,
+        path: String,
+        is_dir: bool,
+    },
+    /// Zona vacía del explorador (pegar en la raíz).
+    ExplorerRoot {
+        worktree: u64,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextMenu {
+    pub x: i32,
+    pub y: i32,
+    pub target: MenuTarget,
+}
+
+/// Elemento que se está renombrando en línea.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RenameTarget {
+    Agent(u64),
+    Entry { worktree: u64, path: String },
+}
+
+/// Archivo o directorio copiado (worktree, ruta).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Clipboard {
+    pub worktree: u64,
+    pub path: String,
+}
+
 /// Confirmación pendiente (modal `app::ConfirmDialog`).
 pub struct ConfirmRequest {
     pub message: String,
@@ -52,6 +89,11 @@ pub struct Store {
     pub icons_ready: RwSignal<bool>,
     pub settings: RwSignal<Settings>,
     pub settings_open: RwSignal<bool>,
+    /// Features contraídas en el panel izquierdo.
+    pub collapsed: RwSignal<HashSet<u64>>,
+    pub menu: RwSignal<Option<ContextMenu>>,
+    pub renaming: RwSignal<Option<RenameTarget>>,
+    pub clipboard: RwSignal<Option<Clipboard>>,
 }
 
 impl Store {
@@ -75,7 +117,100 @@ impl Store {
             icons_ready: RwSignal::new(false),
             settings: RwSignal::new(Settings::default()),
             settings_open: RwSignal::new(false),
+            collapsed: RwSignal::new(HashSet::new()),
+            menu: RwSignal::new(None),
+            renaming: RwSignal::new(None),
+            clipboard: RwSignal::new(None),
         }
+    }
+
+    pub fn is_collapsed(&self, feature: u64) -> bool {
+        self.collapsed.with(|set| set.contains(&feature))
+    }
+
+    pub fn toggle_collapsed(&self, feature: u64) {
+        self.collapsed.update(|set| {
+            if !set.remove(&feature) {
+                set.insert(feature);
+            }
+        });
+    }
+
+    /// Abre el menú contextual en la posición del ratón (sin el menú nativo del navegador).
+    pub fn open_menu(&self, ev: &leptos::ev::MouseEvent, target: MenuTarget) {
+        ev.prevent_default();
+        ev.stop_propagation();
+        self.menu.set(Some(ContextMenu {
+            x: ev.client_x(),
+            y: ev.client_y(),
+            target,
+        }));
+    }
+
+    pub fn is_renaming(&self, target: &RenameTarget) -> bool {
+        self.renaming.with(|r| r.as_ref() == Some(target))
+    }
+
+    /// Termina el renombrado de `target`. Devuelve `false` si ya había terminado
+    /// (p. ej. el `blur` que llega después de pulsar Enter).
+    pub fn finish_renaming(&self, target: &RenameTarget) -> bool {
+        let current = self.renaming.with_untracked(|r| r.as_ref() == Some(target));
+        if current {
+            self.renaming.set(None);
+        }
+        current
+    }
+
+    /// Ajusta selección, archivo abierto y carpetas expandidas tras renombrar `old` → `new`.
+    pub fn path_renamed(&self, worktree: u64, old: &str, new: &str) {
+        self.open_file.update(|f| {
+            if let Some(f) = f.as_mut().filter(|f| f.worktree == worktree) {
+                if let Some(p) = logic::rebase_path(&f.path, old, new) {
+                    f.path = p;
+                }
+            }
+        });
+        self.expanded.update(|set| {
+            *set = set
+                .drain()
+                .map(|(wt, p)| {
+                    let rebased = (wt == worktree)
+                        .then(|| logic::rebase_path(&p, old, new))
+                        .flatten();
+                    (wt, rebased.unwrap_or(p))
+                })
+                .collect();
+        });
+        self.clipboard.update(|c| {
+            if let Some(c) = c.as_mut().filter(|c| c.worktree == worktree) {
+                if let Some(p) = logic::rebase_path(&c.path, old, new) {
+                    c.path = p;
+                }
+            }
+        });
+        self.fs_tick.update(|t| *t += 1);
+        self.bump_git();
+    }
+
+    /// Pega el portapapeles dentro de `dir` y deja visible la copia.
+    pub fn paste(self, worktree: u64, dir: String) {
+        let Some(clip) = self.clipboard.get_untracked() else {
+            return;
+        };
+        spawn_local(async move {
+            match ipc::copy_path(clip.worktree, clip.path, worktree, dir.clone()).await {
+                Ok(_) => {
+                    if !dir.is_empty() {
+                        self.expanded.update(|set| {
+                            set.insert((worktree, dir));
+                        });
+                    }
+                    self.fs_tick.update(|t| *t += 1);
+                    self.bump_git();
+                }
+                Err(e) => self.report(e),
+            }
+        });
     }
 
     /// Pide confirmación con el modal de la app. Una petición nueva cancela la anterior.

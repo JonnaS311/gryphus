@@ -19,7 +19,7 @@ use crate::agent::{Agent, AgentStatus, ProviderId};
 use crate::error::{DomainError, DomainResult};
 use crate::feature::Feature;
 use crate::ids::{AgentId, FeatureId, ProjectId, WorktreeId};
-use crate::names::FeatureName;
+use crate::names::{AgentName, FeatureName};
 use crate::ports::git::WorktreeInfo;
 use crate::worktree::Worktree;
 
@@ -250,14 +250,51 @@ impl Project {
             return Err(DomainError::WorktreeMissing(worktree));
         }
         let id = AgentId(self.next_id());
+        let name = self.default_agent_name(id);
         self.agents.push(Agent {
             id,
             feature,
             worktree,
             provider,
             status: AgentStatus::Starting,
+            name: Some(name),
         });
         Ok(id)
+    }
+
+    /// Cambia el nombre visible del agente. Los nombres pueden repetirse.
+    pub fn rename_agent(&mut self, agent: AgentId, name: AgentName) -> DomainResult<()> {
+        self.agents
+            .iter_mut()
+            .find(|a| a.id == agent)
+            .ok_or(DomainError::AgentNotFound(agent))?
+            .name = Some(name);
+        Ok(())
+    }
+
+    /// Da un nombre por defecto a los agentes guardados sin nombre. Devuelve si cambió algo.
+    pub fn name_unnamed_agents(&mut self) -> bool {
+        let unnamed: Vec<AgentId> = self
+            .agents
+            .iter()
+            .filter(|a| a.name.is_none())
+            .map(|a| a.id)
+            .collect();
+        for id in &unnamed {
+            let name = self.default_agent_name(*id);
+            if let Some(a) = self.agents.iter_mut().find(|a| a.id == *id) {
+                a.name = Some(name);
+            }
+        }
+        !unnamed.is_empty()
+    }
+
+    fn default_agent_name(&self, id: AgentId) -> AgentName {
+        AgentName::pick_default(id.0, |candidate| {
+            self.agents
+                .iter()
+                .any(|a| a.name.as_ref().is_some_and(|n| n.as_str() == candidate))
+        })
     }
 
     pub fn set_agent_status(&mut self, agent: AgentId, status: AgentStatus) -> DomainResult<()> {

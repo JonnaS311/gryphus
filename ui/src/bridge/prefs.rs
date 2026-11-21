@@ -3,6 +3,18 @@
 /// Evento que escucha la terminal (ui/js) para releer `--mono` y `--mono-size`.
 const FONTS_EVENT: &str = "gryphus:fonts";
 
+/// Tamaño interior de la ventana en px (ancho, alto), para colocar menús flotantes.
+pub fn viewport() -> (i32, i32) {
+    let dim = |v: Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue>| {
+        v.ok()
+            .and_then(|v| v.as_f64())
+            .map_or(i32::MAX, |v| v as i32)
+    };
+    web_sys::window().map_or((i32::MAX, i32::MAX), |w| {
+        (dim(w.inner_width()), dim(w.inner_height()))
+    })
+}
+
 fn storage() -> Option<web_sys::Storage> {
     web_sys::window()?.local_storage().ok().flatten()
 }

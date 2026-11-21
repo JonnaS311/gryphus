@@ -136,6 +136,100 @@ impl BranchName {
     }
 }
 
+/// Nombre visible de un agente. Solo es una etiqueta (no toca disco ni git):
+/// cualquier texto imprimible, recortado, de 1 a 40 caracteres.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct AgentName(String);
+
+impl AgentName {
+    pub const MAX_LEN: usize = 40;
+
+    /// Nombres por defecto para agentes nuevos.
+    pub const DEFAULTS: &'static [&'static str] = &[
+        "Atlas",
+        "Nova",
+        "Orion",
+        "Lyra",
+        "Vega",
+        "Sirius",
+        "Luna",
+        "Iris",
+        "Echo",
+        "Juno",
+        "Zephyr",
+        "Aurora",
+        "Rigel",
+        "Cosmo",
+        "Ada",
+        "Turing",
+        "Hopper",
+        "Kepler",
+        "Tesla",
+        "Curie",
+        "Darwin",
+        "Euler",
+        "Gauss",
+        "Newton",
+        "Pascal",
+        "Ramanujan",
+        "Noether",
+        "Hypatia",
+        "Fenix",
+        "Draco",
+        "Pegaso",
+        "Quimera",
+        "Helios",
+        "Selene",
+        "Gaia",
+        "Titan",
+        "Polaris",
+        "Andrómeda",
+        "Casiopea",
+        "Altair",
+    ];
+
+    pub fn parse(raw: &str) -> Result<Self, NameError> {
+        let s = raw.trim();
+        if s.is_empty() {
+            return Err(NameError::Empty);
+        }
+        if s.chars().count() > Self::MAX_LEN {
+            return Err(NameError::TooLong { max: Self::MAX_LEN });
+        }
+        if let Some(c) = s.chars().find(|c| c.is_control()) {
+            return Err(NameError::InvalidChar(c));
+        }
+        Ok(Self(s.to_owned()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Nombre por defecto "aleatorio" (determinista según `seed`) que no esté en `taken`.
+    /// Si todos están usados, añade un número: `Nova 2`.
+    pub fn pick_default(seed: u64, taken: impl Fn(&str) -> bool) -> Self {
+        let n = Self::DEFAULTS.len();
+        // Mezcla de Fibonacci: ids consecutivos dan nombres que no siguen el orden de la lista.
+        let start = (seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32) as usize % n;
+        for round in 1.. {
+            for i in 0..n {
+                let base = Self::DEFAULTS[(start + i) % n];
+                let name = if round == 1 {
+                    base.to_owned()
+                } else {
+                    format!("{base} {round}")
+                };
+                if !taken(&name) {
+                    return Self(name);
+                }
+            }
+        }
+        unreachable!("el bucle siempre encuentra un nombre libre")
+    }
+}
+
 macro_rules! string_newtype_impls {
     ($t:ty) => {
         impl TryFrom<String> for $t {
@@ -158,6 +252,7 @@ macro_rules! string_newtype_impls {
 }
 string_newtype_impls!(FeatureName);
 string_newtype_impls!(BranchName);
+string_newtype_impls!(AgentName);
 
 #[cfg(test)]
 mod tests {
@@ -248,6 +343,31 @@ mod tests {
         assert_eq!(serde_json::from_str::<FeatureName>(&json).unwrap(), name);
         assert!(serde_json::from_str::<FeatureName>("\"a b\"").is_err());
         assert!(serde_json::from_str::<BranchName>("\"a..b\"").is_err());
+    }
+
+    #[test]
+    fn agent_name_is_a_free_label() {
+        assert_eq!(
+            AgentName::parse("  Mi agente ñ ").unwrap().as_str(),
+            "Mi agente ñ"
+        );
+        assert_eq!(AgentName::parse("  "), Err(NameError::Empty));
+        assert_eq!(AgentName::parse("a\nb"), Err(NameError::InvalidChar('\n')));
+        assert_eq!(
+            AgentName::parse(&"x".repeat(41)),
+            Err(NameError::TooLong { max: 40 })
+        );
+    }
+
+    #[test]
+    fn default_agent_names_avoid_taken_ones() {
+        let first = AgentName::pick_default(7, |_| false);
+        assert!(AgentName::DEFAULTS.contains(&first.as_str()));
+        let other = AgentName::pick_default(7, |n| n == first.as_str());
+        assert_ne!(other, first);
+        let numbered = AgentName::pick_default(7, |n| AgentName::DEFAULTS.contains(&n));
+        assert!(numbered.as_str().ends_with(" 2"), "{numbered:?}");
+        assert!(AgentName::parse(numbered.as_str()).is_ok());
     }
 
     proptest! {

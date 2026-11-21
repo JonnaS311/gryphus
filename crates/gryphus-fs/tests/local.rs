@@ -120,3 +120,40 @@ fn watching_a_missing_directory_is_not_found() {
         PortErrorKind::NotFound,
     );
 }
+
+#[test]
+fn copy_between_worktrees_skips_git_and_never_overwrites() {
+    let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let fs = LocalFs::new();
+    fs.write_file(a.path(), &rel("dir/x.txt"), b"x").unwrap();
+    std::fs::create_dir(a.path().join("dir").join(".git")).unwrap();
+
+    fs.copy(a.path(), &rel("dir"), b.path(), &rel("dir"))
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(b.path().join("dir").join("x.txt")).unwrap(),
+        "x"
+    );
+    assert!(
+        !b.path().join("dir").join(".git").exists(),
+        ".git no se copia"
+    );
+    // Mismo nombre relativo en otro worktree no es "dentro de sí mismo"; ya existe → error.
+    assert_kind(
+        fs.copy(a.path(), &rel("dir"), b.path(), &rel("dir")),
+        PortErrorKind::AlreadyExists,
+    );
+}
+
+#[test]
+fn rename_changing_only_case_is_allowed() {
+    let dir = tempfile::tempdir().unwrap();
+    let fs = LocalFs::new();
+    fs.write_file(dir.path(), &rel("a.txt"), b"a").unwrap();
+    fs.rename(dir.path(), &rel("a.txt"), &rel("A.txt")).unwrap();
+    let names: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["A.txt"]);
+}

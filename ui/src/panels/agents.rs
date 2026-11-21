@@ -6,7 +6,8 @@ use leptos::task::spawn_local;
 
 use crate::ipc;
 use crate::logic;
-use crate::store::Store;
+use crate::panels::InlineRename;
+use crate::store::{MenuTarget, RenameTarget, Store};
 
 #[component]
 pub fn AgentsPanel() -> impl IntoView {
@@ -40,7 +41,8 @@ pub fn AgentsPanel() -> impl IntoView {
             {move || {
                 features()
                     .into_iter()
-                    .map(|feature| view! { <FeatureItem feature/> })
+                    .enumerate()
+                    .map(|(index, feature)| view! { <FeatureItem feature index/> })
                     .collect_view()
             }}
         </aside>
@@ -182,10 +184,19 @@ fn delete_feature(store: Store, id: u64) {
     });
 }
 
+/// `index`: posición en la lista; da a cada feature un color distinto al de sus vecinas.
 #[component]
-fn FeatureItem(feature: FeatureDto) -> impl IntoView {
+fn FeatureItem(feature: FeatureDto, index: usize) -> impl IntoView {
     let store = expect_context::<Store>();
     let id = feature.id;
+    let hue = logic::feature_hue(index);
+    let collapsed = move || store.is_collapsed(id);
+    let agent_count = move || {
+        store
+            .project
+            .with(|p| p.as_ref().map_or(0, |p| logic::agents_of(p, id).len()))
+    };
+    let show_count = move || collapsed() && agent_count() != 0;
     let agents = move || {
         store.project.with(|p| {
             p.as_ref()
@@ -204,10 +215,24 @@ fn FeatureItem(feature: FeatureDto) -> impl IntoView {
         <section
             class="feature"
             class:selected=move || store.selected_feature.get() == Some(id)
+            class:collapsed=collapsed
+            style=format!("--feature-hue: {hue}")
             data-feature=feature.name.clone()
         >
-            <header class="feature-header" on:click=move |_| store.selected_feature.set(Some(id))>
+            <header
+                class="feature-header"
+                title="Clic para expandir o contraer"
+                aria-expanded=move || (!collapsed()).to_string()
+                on:click=move |_| {
+                    store.selected_feature.set(Some(id));
+                    store.toggle_collapsed(id);
+                }
+            >
+                <span class="chev">{move || if collapsed() { "▸" } else { "▾" }}</span>
                 <span class="feature-name">{feature.name.clone()}</span>
+                <Show when=show_count>
+                    <span class="feature-count" title="Agentes">{agent_count}</span>
+                </Show>
                 <button
                     class="icon danger"
                     title="Eliminar feature"
@@ -219,13 +244,15 @@ fn FeatureItem(feature: FeatureDto) -> impl IntoView {
                     "×"
                 </button>
             </header>
-            <ul class="worktrees">
-                {worktrees.iter().map(|wt| view! { <WorktreeRow worktree=*wt/> }).collect_view()}
-            </ul>
-            <ul class="agents">
-                {move || agents().into_iter().map(|agent| view! { <AgentRow agent/> }).collect_view()}
-            </ul>
-            <NewAgent feature=id worktrees=feature.worktrees.clone()/>
+            <Show when=move || !collapsed()>
+                <ul class="worktrees">
+                    {worktrees.iter().map(|wt| view! { <WorktreeRow worktree=*wt/> }).collect_view()}
+                </ul>
+                <ul class="agents">
+                    {move || agents().into_iter().map(|agent| view! { <AgentRow agent/> }).collect_view()}
+                </ul>
+                <NewAgent feature=id worktrees=worktrees.clone()/>
+            </Show>
         </section>
     }
 }
@@ -259,11 +286,25 @@ fn AgentRow(agent: AgentDto) -> impl IntoView {
     let store = expect_context::<Store>();
     let AgentDto {
         id,
+        name,
         feature,
         worktree,
         provider,
         status,
     } = agent;
+    let rename_target = RenameTarget::Agent(id);
+    let renaming = {
+        let t = rename_target.clone();
+        move || store.is_renaming(&t)
+    };
+    let commit = move |new_name: String| {
+        spawn_local(async move {
+            match ipc::rename_agent(id, new_name).await {
+                Ok(()) => store.refresh_project(),
+                Err(e) => store.report(e),
+            }
+        });
+    };
     let (class, label) = logic::status_badge(&status);
     let active = status.is_active();
     let stop = move |ev: leptos::ev::MouseEvent| {
@@ -306,10 +347,21 @@ fn AgentRow(agent: AgentDto) -> impl IntoView {
             class="agent"
             class:selected=move || store.selected_agent.get() == Some(id)
             data-agent=id.to_string()
+            title="Clic derecho para renombrar"
             on:click=move |_| store.select_agent(id, worktree, feature)
+            on:contextmenu=move |ev| store.open_menu(&ev, MenuTarget::Agent(id))
         >
             <span class=format!("dot {class}") title=label.clone()></span>
-            <span class="agent-name">{format!("{provider} #{id}")}</span>
+            <Show
+                when=renaming
+                fallback={
+                    let name = name.clone();
+                    move || view! { <span class="agent-name ellipsis">{name.clone()}</span> }
+                }
+            >
+                <InlineRename initial=name.clone() target=rename_target.clone() on_commit=commit/>
+            </Show>
+            <span class="agent-provider muted">{provider}</span>
             <span class="agent-status muted">{label}</span>
             <span class="actions">
                 {if active {

@@ -10,8 +10,8 @@ use gryphus_core::ports::{
     Subscription, TermSize,
 };
 use gryphus_core::{
-    AgentId, AgentStatus, BranchName, Config, DomainError, DomainEvent, EventSink, FeatureId,
-    FeatureName, Project, ProjectId, ProviderId, RelPath, WorktreeId,
+    AgentId, AgentName, AgentStatus, BranchName, Config, DomainError, DomainEvent, EventSink,
+    FeatureId, FeatureName, PathError, Project, ProjectId, ProviderId, RelPath, WorktreeId,
 };
 
 use crate::error::AppResult;
@@ -82,6 +82,7 @@ impl ProjectSession {
             .load_project(&id)?
             .unwrap_or_else(|| Project::new(root.clone()));
         project.reset_after_restart();
+        project.name_unnamed_agents();
         project.sync_worktrees(&ports.git.list_worktrees(&root)?);
         ports.store.save_project(&project)?;
 
@@ -268,6 +269,14 @@ impl ProjectSession {
         Ok(())
     }
 
+    pub fn rename_agent(&self, agent: AgentId, name: &str) -> AppResult<()> {
+        let name = AgentName::parse(name)?;
+        self.inner.mutate(|p| p.rename_agent(agent, name))?;
+        let feature = lock(&self.inner.project).agent(agent)?.feature();
+        self.inner.publish(DomainEvent::FeatureChanged(feature));
+        Ok(())
+    }
+
     pub fn agent_input(&self, agent: AgentId, bytes: &[u8]) -> AppResult<()> {
         Ok(self.inner.ports.agents.write(agent, bytes)?)
     }
@@ -319,6 +328,51 @@ impl ProjectSession {
             .write_file(&root, &RelPath::parse(file)?, content)?)
     }
 
+    /// Cambia el nombre (último componente) de un archivo o directorio. Devuelve la ruta nueva.
+    pub fn rename_path(
+        &self,
+        worktree: WorktreeId,
+        path: &str,
+        new_name: &str,
+    ) -> AppResult<RelPath> {
+        let root = self.inner.worktree_path(worktree)?;
+        let from = RelPath::parse(path)?;
+        let name = single_component(new_name)?;
+        let to = from.parent().unwrap_or_default().join(&name)?;
+        self.inner.ports.fs.rename(&root, &from, &to)?;
+        Ok(to)
+    }
+
+    /// Pega una copia de `from` dentro del directorio `to_dir` (puede ser otro worktree).
+    /// Si el nombre ya existe allí, usa `nombre copia.ext`, `nombre copia 2.ext`…
+    /// Devuelve la ruta creada.
+    pub fn copy_path(
+        &self,
+        from_worktree: WorktreeId,
+        from: &str,
+        to_worktree: WorktreeId,
+        to_dir: &str,
+    ) -> AppResult<RelPath> {
+        let from_root = self.inner.worktree_path(from_worktree)?;
+        let to_root = self.inner.worktree_path(to_worktree)?;
+        let from = RelPath::parse(from)?;
+        let to_dir = RelPath::parse(to_dir)?;
+        let Some(name) = from.file_name() else {
+            return Err(PathError::InvalidComponent(String::new()).into());
+        };
+        let fs = &self.inner.ports.fs;
+        let taken: Vec<String> = fs
+            .list_dir(&to_root, &to_dir)?
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
+        let target = to_dir.join(&copy_name(name, |n| {
+            taken.iter().any(|t| t.eq_ignore_ascii_case(n))
+        }))?;
+        fs.copy(&from_root, &from, &to_root, &target)?;
+        Ok(target)
+    }
+
     // ── Git ──────────────────────────────────────────────────────────────────
 
     pub fn git_status(&self, worktree: WorktreeId) -> AppResult<Vec<FileStatus>> {
@@ -362,6 +416,38 @@ impl ProjectSession {
         let snapshot = self.project();
         Ok(self.inner.ports.store.save_project(&snapshot)?)
     }
+}
+
+/// Valida un nombre de archivo nuevo: un solo componente de ruta.
+fn single_component(raw: &str) -> AppResult<String> {
+    let trimmed = raw.trim();
+    let parsed = RelPath::parse(trimmed)?;
+    if parsed.is_root() || parsed.as_str() != trimmed || trimmed.contains(['/', '\\']) {
+        return Err(PathError::InvalidComponent(raw.to_owned()).into());
+    }
+    Ok(trimmed.to_owned())
+}
+
+/// Nombre libre para una copia: `a.txt` → `a.txt` si está libre; si no
+/// `a copia.txt`, `a copia 2.txt`… (los directorios y `.env` no tienen extensión).
+pub(crate) fn copy_name(name: &str, taken: impl Fn(&str) -> bool) -> String {
+    if !taken(name) {
+        return name.to_owned();
+    }
+    let (stem, ext) = match name.rfind('.') {
+        Some(i) if i > 0 => name.split_at(i),
+        _ => (name, ""),
+    };
+    (1..)
+        .map(|n| {
+            if n == 1 {
+                format!("{stem} copia{ext}")
+            } else {
+                format!("{stem} copia {n}{ext}")
+            }
+        })
+        .find(|candidate| !taken(candidate))
+        .expect("siempre hay un nombre libre")
 }
 
 impl Inner {
@@ -502,6 +588,29 @@ impl Inner {
             .is_ok()
         {
             self.publish(DomainEvent::AgentStatusChanged { agent, status });
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn copy_names_avoid_collisions() {
+        let taken = ["a.txt", "a copia.txt", "dir", ".env"];
+        let is_taken = |n: &str| taken.contains(&n);
+        assert_eq!(copy_name("b.txt", is_taken), "b.txt");
+        assert_eq!(copy_name("a.txt", is_taken), "a copia 2.txt");
+        assert_eq!(copy_name("dir", is_taken), "dir copia");
+        assert_eq!(copy_name(".env", is_taken), ".env copia");
+    }
+
+    #[test]
+    fn new_names_are_a_single_component() {
+        assert_eq!(single_component("  b.txt ").unwrap(), "b.txt");
+        for bad in ["", "a/b", "..", "a\\b", "c:x", "."] {
+            assert!(single_component(bad).is_err(), "{bad:?}");
         }
     }
 }
