@@ -249,6 +249,7 @@ input:focus, select:focus { outline: 1px solid var(--accent); outline-offset: -1
 .context-menu button { display: block; width: 100%; background: none; border: none; border-radius: 4px; padding: 5px 10px; text-align: left; color: var(--text); }
 .context-menu button:hover:not(:disabled) { background: var(--accent); color: #0b1220; }
 .context-menu button:disabled { color: var(--muted); opacity: 0.6; }
+.context-menu .separator { height: 1px; margin: 4px 6px; background: var(--border); }
 /* Selector de color de una feature: la misma paleta que `.feature-header`. */
 .menu-swatches { display: flex; gap: 4px; padding: 6px 6px 8px; margin-bottom: 4px; border-bottom: 1px solid var(--border); }
 .context-menu .swatch { display: block; flex: none; width: 18px; height: 18px; padding: 0; border-radius: 50%; background: hsl(var(--feature-hue) 70% 62%); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25); }

@@ -1,7 +1,11 @@
 //! Utilidades del DOM que Leptos no cubre (desplazamiento a un elemento, foco,
-//! plataforma, modificador principal de los atajos y qué hay bajo el puntero al soltar archivos).
+//! portapapeles del sistema, plataforma, modificador principal de los atajos y qué
+//! hay bajo el puntero al soltar archivos).
 
 use std::sync::OnceLock;
+
+use js_sys::{Function, Promise, Reflect};
+use wasm_bindgen::{JsCast, JsValue};
 
 /// `true` en macOS (WKWebView). Allí los atajos usan ⌘ en vez de Ctrl.
 pub fn is_mac() -> bool {
@@ -28,6 +32,51 @@ pub fn has_focus() -> bool {
         .and_then(|w| w.document())
         .and_then(|d| d.has_focus().ok())
         .unwrap_or(true)
+}
+
+/// Sistema operativo donde corre la app (para los textos de la UI).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Os {
+    Windows,
+    Mac,
+    Linux,
+}
+
+pub fn os() -> Os {
+    if is_mac() {
+        return Os::Mac;
+    }
+    let windows = web_sys::window()
+        .and_then(|w| w.navigator().user_agent().ok())
+        .is_some_and(|ua| ua.contains("Windows"));
+    if windows {
+        Os::Windows
+    } else {
+        Os::Linux
+    }
+}
+
+/// Copia texto al portapapeles del sistema (`navigator.clipboard.writeText`).
+pub async fn copy_text(text: &str) -> Result<(), String> {
+    let call = || -> Result<Promise, JsValue> {
+        let navigator = Reflect::get(&js_sys::global(), &"navigator".into())?;
+        let clipboard = Reflect::get(&navigator, &"clipboard".into())?;
+        let write: Function = Reflect::get(&clipboard, &"writeText".into())?.dyn_into()?;
+        write.call1(&clipboard, &text.into())?.dyn_into()
+    };
+    let promise = call().map_err(|_| "el portapapeles no está disponible".to_owned())?;
+    wasm_bindgen_futures::JsFuture::from(promise)
+        .await
+        .map(drop)
+        .map_err(|e| {
+            e.as_string()
+                .or_else(|| {
+                    Reflect::get(&e, &"message".into())
+                        .ok()
+                        .and_then(|m| m.as_string())
+                })
+                .unwrap_or_else(|| "no se pudo copiar al portapapeles".to_owned())
+        })
 }
 
 /// Qué hay bajo un punto de la ventana al arrastrar archivos encima.

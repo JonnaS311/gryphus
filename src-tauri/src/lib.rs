@@ -6,6 +6,7 @@ pub mod dto;
 pub mod events;
 #[cfg(target_os = "macos")]
 mod menu;
+mod reveal;
 pub mod shell_env;
 pub mod startup;
 pub mod state;
@@ -103,6 +104,7 @@ pub fn run() {
             commands::write_file,
             commands::rename_path,
             commands::copy_path,
+            commands::reveal_path,
             commands::import_paths,
             commands::clipboard_files,
             commands::clipboard_copy_path,

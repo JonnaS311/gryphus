@@ -71,6 +71,27 @@ pub fn parent_dir(path: &str) -> &str {
     path.rsplit_once('/').map_or("", |(dir, _)| dir)
 }
 
+/// Ruta con el separador del sistema (`\` en Windows), como al copiarla en VS Code.
+/// git devuelve las rutas de los worktrees con `/` también en Windows.
+pub fn native_path(path: &str, windows: bool) -> String {
+    if windows {
+        path.replace('/', "\\")
+    } else {
+        path.to_owned()
+    }
+}
+
+/// Ruta absoluta de `rel` (relativa al worktree en `root`; `""` es la raíz).
+pub fn absolute_path(root: &str, rel: &str, windows: bool) -> String {
+    let root = native_path(root, windows);
+    if rel.is_empty() {
+        return root;
+    }
+    let sep = if windows { '\\' } else { '/' };
+    let base = root.trim_end_matches(sep);
+    format!("{base}{sep}{}", native_path(rel, windows))
+}
+
 /// Si `path` es `old` o está dentro de él, la ruta equivalente bajo `new`.
 pub fn rebase_path(path: &str, old: &str, new: &str) -> Option<String> {
     if path == old {
@@ -220,6 +241,23 @@ pub fn tracking_text(b: &BranchDto) -> String {
 mod tests {
     use super::*;
     use gryphus_ipc::{DiffLineDto, HunkDto};
+
+    #[test]
+    fn paths_use_the_separator_of_the_os() {
+        assert_eq!(
+            absolute_path("C:/repo", "src/a.rs", true),
+            r"C:\repo\src\a.rs"
+        );
+        assert_eq!(absolute_path(r"C:\", "a.rs", true), r"C:\a.rs");
+        assert_eq!(absolute_path("C:/repo", "", true), r"C:\repo");
+        assert_eq!(
+            absolute_path("/home/r/", "src/a.rs", false),
+            "/home/r/src/a.rs"
+        );
+        assert_eq!(absolute_path("/home/r", "", false), "/home/r");
+        assert_eq!(native_path("src/a.rs", true), r"src\a.rs");
+        assert_eq!(native_path("src/a.rs", false), "src/a.rs");
+    }
 
     fn wt(id: u64, branch: Option<&str>, is_main: bool) -> WorktreeDto {
         WorktreeDto {

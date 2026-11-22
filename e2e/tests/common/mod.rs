@@ -447,6 +447,51 @@ impl App {
         .await
     }
 
+    /// Como [`Self::invoke`], pero un comando que falla devuelve su `IpcError`
+    /// (`{ code, message }`) en vez de hacer fallar el script.
+    pub async fn invoke_result(&self, cmd: &str, req: Value) -> Result<Value, Value> {
+        let res = self
+            .script(
+                "return window.__TAURI__.core.invoke(arguments[0], { req: arguments[1] })
+                     .then(ok => ({ ok }), err => ({ err }));",
+                vec![json!(cmd), req],
+            )
+            .await;
+        match res.get("err") {
+            Some(err) => Err(err.clone()),
+            None => Ok(res["ok"].clone()),
+        }
+    }
+
+    /// Registra lo que la app escribe en el portapapeles (y lo sigue escribiendo
+    /// en el del sistema). Leerlo con [`Self::wait_copied`].
+    pub async fn record_clipboard(&self) {
+        self.script(
+            "window.__copied = [];
+             const clip = navigator.clipboard;
+             const original = clip.writeText.bind(clip);
+             clip.writeText = text => { window.__copied.push(text); return original(text); };
+             return null;",
+            vec![],
+        )
+        .await;
+    }
+
+    /// Espera la siguiente escritura en el portapapeles y la devuelve.
+    pub async fn wait_copied(&self) -> String {
+        let start = Instant::now();
+        while start.elapsed() < TIMEOUT {
+            let next = self
+                .script("return window.__copied.shift() ?? null;", vec![])
+                .await;
+            if let Some(text) = next.as_str() {
+                return text.to_owned();
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        panic!("tiempo agotado esperando: escritura en el portapapeles");
+    }
+
     pub async fn open_project(&self, path: &str) {
         self.wait_css("#project-path").await;
         self.client

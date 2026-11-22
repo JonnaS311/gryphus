@@ -151,6 +151,11 @@ pub async fn copy_path(
     .await
 }
 
+/// Muestra la ruta en el gestor de archivos del sistema (`""` abre la raíz).
+pub async fn reveal_path(worktree: u64, path: String) -> IpcResult<()> {
+    invoke(cmd::REVEAL_PATH, Some(&PathReq { worktree, path })).await
+}
+
 /// Copia rutas absolutas de fuera dentro de `to_dir`; devuelve las rutas creadas.
 pub async fn import_paths(
     worktree: u64,

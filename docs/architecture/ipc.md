@@ -53,6 +53,7 @@ Los tipos viven en **`gryphus-ipc`** (solo `serde`) y los compilan tanto `src-ta
 | `write_file` | `WriteFileReq { worktree, path, content }` | — |
 | `rename_path` | `RenamePathReq { worktree, path, new_name }` (`new_name` es un solo componente; nunca sobrescribe) | ruta nueva |
 | `copy_path` | `CopyPathReq { from_worktree, from, to_worktree, to_dir }` (si el nombre existe usa `nombre copia.ext`) | ruta creada |
+| `reveal_path` | `PathReq` (muestra el elemento en Explorador / Finder / gestor de archivos vía D-Bus `FileManager1` o `xdg-open`; `""` abre la raíz) | `()` |
 | `import_paths` | `ImportPathsReq { worktree, sources, to_dir }` (`sources`: rutas absolutas de fuera, soltadas o pegadas desde el sistema; mismos nombres que `copy_path`) | rutas creadas |
 | `clipboard_files` | — | archivos del portapapeles del sistema (rutas absolutas; vacío si no hay) |
 | `clipboard_copy_path` | `PathReq` | `()` (pone el archivo en el portapapeles del sistema) |

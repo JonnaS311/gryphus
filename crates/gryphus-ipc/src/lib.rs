@@ -40,6 +40,9 @@ pub mod cmd {
     pub const RENAME_PATH: &str = "rename_path";
     /// Pega una copia; devuelve la ruta creada.
     pub const COPY_PATH: &str = "copy_path";
+    /// Muestra la ruta en el gestor de archivos del sistema (Explorador, Finder…).
+    /// Req: [`super::PathReq`]; `""` abre la raíz del worktree.
+    pub const REVEAL_PATH: &str = "reveal_path";
     /// Copia rutas absolutas de fuera (soltar o pegar desde el sistema). Req:
     /// [`super::ImportPathsReq`]; devuelve las rutas creadas.
     pub const IMPORT_PATHS: &str = "import_paths";
@@ -466,6 +469,7 @@ mod tests {
             cmd::WRITE_FILE,
             cmd::RENAME_PATH,
             cmd::COPY_PATH,
+            cmd::REVEAL_PATH,
             cmd::IMPORT_PATHS,
             cmd::CLIPBOARD_FILES,
             cmd::CLIPBOARD_COPY_PATH,

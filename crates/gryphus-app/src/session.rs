@@ -478,7 +478,8 @@ impl ProjectSession {
         Ok(created)
     }
 
-    /// Ruta absoluta de `path` dentro del worktree (para el portapapeles del sistema).
+    /// Ruta absoluta de `path` (relativa al worktree), validada; `""` es la raíz.
+    /// No comprueba que exista (portapapeles y gestor de archivos del sistema).
     pub fn absolute_path(&self, worktree: WorktreeId, path: &str) -> AppResult<PathBuf> {
         let root = self.inner.worktree_path(worktree)?;
         Ok(RelPath::parse(path)?.to_path(&root))
