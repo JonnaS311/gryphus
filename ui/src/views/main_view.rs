@@ -139,7 +139,7 @@ pub fn MainView() -> impl IntoView {
                                                 id=format!("tab-{}", v.label().to_lowercase())
                                                 title=format!(
                                                     "{} · arrastra a un lado para abrirla junto a las demás",
-                                                    v.shortcut(),
+                                                    v.shortcut(crate::bridge::dom::is_mac()),
                                                 )
                                                 aria-selected=active.to_string()
                                                 on:pointerdown=move |ev| {

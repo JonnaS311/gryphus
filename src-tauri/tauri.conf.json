@@ -24,6 +24,10 @@
     "copyright": "Copyright (c) 2026 Jonnathan Sotelo. Licencia MIT.",
     "license": "MIT",
     "homepage": "https://github.com/JonnaS311/gryphus",
-    "icon": ["icons/icon.png", "icons/icon.ico"]
+    "icon": ["icons/icon.png", "icons/icon.icns", "icons/icon.ico"],
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": "-"
+    }
   }
 }

@@ -37,6 +37,7 @@ gryphus-store = { workspace = true }
 
 [dev-dependencies]
 gryphus-testkit = { workspace = true }
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

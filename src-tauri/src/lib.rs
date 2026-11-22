@@ -4,6 +4,9 @@
 pub mod commands;
 pub mod dto;
 pub mod events;
+#[cfg(target_os = "macos")]
+mod menu;
+pub mod shell_env;
 pub mod startup;
 pub mod state;
 
@@ -28,7 +31,12 @@ pub fn window_builder<'a, R: tauri::Runtime, M: Manager<R>>(
 
 pub fn run() {
     startup::begin();
-    tauri::Builder::default()
+    shell_env::import_login_path();
+    startup::trace("shell_env");
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(menu::build).on_menu_event(menu::on_event);
+    builder
         .plugin(tauri_plugin_dialog::init())
         .on_page_load(|_, payload| match payload.event() {
             PageLoadEvent::Started => startup::trace("page_started"),

@@ -23,7 +23,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        # macos-latest es Apple Silicon (arm64). Sin job e2e en macOS: tauri-driver
+        # no lo soporta (WKWebView no tiene driver WebDriver).
+        os: [windows-latest, ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7

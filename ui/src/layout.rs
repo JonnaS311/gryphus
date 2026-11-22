@@ -20,12 +20,15 @@ impl CenterView {
         }
     }
 
-    /// Atajo de teclado documentado en docs/architecture/ui.md.
-    pub fn shortcut(self) -> &'static str {
-        match self {
-            CenterView::Agent => "Ctrl+1",
-            CenterView::Editor => "Ctrl+2",
-            CenterView::Diff => "Ctrl+3",
+    /// Atajo de teclado documentado en docs/architecture/ui.md (⌘ en macOS).
+    pub fn shortcut(self, mac: bool) -> &'static str {
+        match (self, mac) {
+            (CenterView::Agent, false) => "Ctrl+1",
+            (CenterView::Editor, false) => "Ctrl+2",
+            (CenterView::Diff, false) => "Ctrl+3",
+            (CenterView::Agent, true) => "⌘1",
+            (CenterView::Editor, true) => "⌘2",
+            (CenterView::Diff, true) => "⌘3",
         }
     }
 
@@ -535,8 +538,20 @@ mod tests {
 
     #[test]
     fn shortcuts_are_unique() {
-        let mut shortcuts: Vec<_> = CenterView::ALL.iter().map(|v| v.shortcut()).collect();
-        shortcuts.dedup();
-        assert_eq!(shortcuts.len(), CenterView::ALL.len());
+        for mac in [false, true] {
+            let mut shortcuts: Vec<_> = CenterView::ALL.iter().map(|v| v.shortcut(mac)).collect();
+            shortcuts.dedup();
+            assert_eq!(shortcuts.len(), CenterView::ALL.len());
+        }
+    }
+
+    #[test]
+    fn mac_shortcuts_use_command() {
+        assert!(CenterView::ALL
+            .iter()
+            .all(|v| v.shortcut(true).starts_with('⌘')));
+        assert!(CenterView::ALL
+            .iter()
+            .all(|v| v.shortcut(false).starts_with("Ctrl+")));
     }
 }

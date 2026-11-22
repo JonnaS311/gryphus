@@ -59,7 +59,7 @@ pub fn App() -> impl IntoView {
     });
 
     let _keys = window_event_listener(leptos::ev::keydown, move |ev| {
-        if !ev.ctrl_key() {
+        if !crate::bridge::dom::primary_mod(&ev) {
             return;
         }
         let view = match ev.key().as_str() {

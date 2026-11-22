@@ -69,10 +69,14 @@ Reglas (verificadas por `tools/arch-guard`):
 
 ## Atajos
 
-| Atajo | Acción |
-|---|---|
-| `Ctrl+1/2/3` | Pestaña Agente / Editor / Diff (la muestra en su columna y le da el foco) |
-| `Ctrl+S` | Guardar (en el editor) |
+| Atajo (Windows/Linux) | macOS | Acción |
+|---|---|---|
+| `Ctrl+1/2/3` | `⌘1/2/3` | Pestaña Agente / Editor / Diff (la muestra en su columna y le da el foco) |
+| `Ctrl+S` | `⌘S` | Guardar (en el editor) |
+| `Ctrl+W` | `⌘W` | Cerrar la pestaña del editor |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | igual | Siguiente / anterior pestaña del editor |
+
+`bridge::dom::primary_mod` decide el modificador (⌘ si el user agent es de Mac). En macOS la app define su propio menú (`src-tauri/src/menu.rs`) con el menú Edición, sin el cual el WebView no recibe ⌘C/⌘V. No incluye "Cerrar ventana" con ⌘W, para que ⌘W llegue al editor, y su "Salir" (⌘Q) cierra cada ventana pasando por la guarda de cierre.
 
 ## Pegamento JS (`ui/js`)
 
