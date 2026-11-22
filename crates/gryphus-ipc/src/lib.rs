@@ -40,6 +40,13 @@ pub mod cmd {
     pub const RENAME_PATH: &str = "rename_path";
     /// Pega una copia; devuelve la ruta creada.
     pub const COPY_PATH: &str = "copy_path";
+    /// Copia rutas absolutas de fuera (soltar o pegar desde el sistema). Req:
+    /// [`super::ImportPathsReq`]; devuelve las rutas creadas.
+    pub const IMPORT_PATHS: &str = "import_paths";
+    /// Archivos del portapapeles del sistema (rutas absolutas; vacío si no hay).
+    pub const CLIPBOARD_FILES: &str = "clipboard_files";
+    /// Pone un archivo del worktree en el portapapeles del sistema. Req: [`super::PathReq`].
+    pub const CLIPBOARD_COPY_PATH: &str = "clipboard_copy_path";
     pub const GIT_STATUS: &str = "git_status";
     pub const GIT_DIFF: &str = "git_diff";
     pub const GIT_OVERVIEW: &str = "git_overview";
@@ -234,6 +241,15 @@ pub struct CopyPathReq {
     pub from_worktree: u64,
     pub from: String,
     pub to_worktree: u64,
+    /// Directorio destino; "" es la raíz.
+    pub to_dir: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImportPathsReq {
+    pub worktree: u64,
+    /// Rutas absolutas del sistema.
+    pub sources: Vec<String>,
     /// Directorio destino; "" es la raíz.
     pub to_dir: String,
 }
@@ -450,6 +466,9 @@ mod tests {
             cmd::WRITE_FILE,
             cmd::RENAME_PATH,
             cmd::COPY_PATH,
+            cmd::IMPORT_PATHS,
+            cmd::CLIPBOARD_FILES,
+            cmd::CLIPBOARD_COPY_PATH,
             cmd::GIT_STATUS,
             cmd::GIT_DIFF,
             cmd::GIT_OVERVIEW,

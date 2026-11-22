@@ -79,6 +79,19 @@ pub enum RenameTarget {
 pub struct Clipboard {
     pub worktree: u64,
     pub path: String,
+    /// También quedó en el portapapeles del sistema (que entonces manda al pegar).
+    pub in_system: bool,
+}
+
+/// Dónde caerían los archivos que se arrastran desde fuera (resaltado).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FileDrop {
+    Terminal,
+    /// Directorio del explorador (`""` = raíz).
+    Explorer {
+        worktree: u64,
+        dir: String,
+    },
 }
 
 /// Confirmación pendiente (modal `app::ConfirmDialog`): "Cancelar" más una o
@@ -140,6 +153,12 @@ pub struct Store {
     pub clipboard: RwSignal<Option<Clipboard>>,
     /// Agentes que terminaron su tarea y aún no se han revisado (su feature parpadea).
     pub attention: RwSignal<HashSet<u64>>,
+    /// Última fila del explorador pulsada: (worktree, ruta, ¿es carpeta?). Es el
+    /// origen de Ctrl+C y el destino de Ctrl+V en el explorador.
+    pub explorer_selected: RwSignal<Option<(u64, String, bool)>>,
+    pub drop_target: RwSignal<Option<FileDrop>>,
+    /// Texto que la terminal del agente debe pegar (rutas soltadas o pegadas).
+    pub terminal_paste: RwSignal<Option<String>>,
 }
 
 impl Store {
@@ -175,6 +194,9 @@ impl Store {
             renaming: RwSignal::new(None),
             clipboard: RwSignal::new(None),
             attention: RwSignal::new(HashSet::new()),
+            explorer_selected: RwSignal::new(None),
+            drop_target: RwSignal::new(None),
+            terminal_paste: RwSignal::new(None),
         }
     }
 
@@ -318,23 +340,97 @@ impl Store {
         self.bump_git();
     }
 
-    /// Pega el portapapeles dentro de `dir` y deja visible la copia.
+    /// Copia un archivo o carpeta del explorador: al portapapeles de Gryphus y, si se
+    /// puede, al del sistema (para pegarlo en la terminal de un agente o fuera).
+    pub fn copy_entry(self, worktree: u64, path: String) {
+        self.clipboard.set(Some(Clipboard {
+            worktree,
+            path: path.clone(),
+            in_system: false,
+        }));
+        spawn_local(async move {
+            if ipc::clipboard_copy_path(worktree, path.clone())
+                .await
+                .is_ok()
+            {
+                self.clipboard.update(|c| {
+                    if let Some(c) = c
+                        .as_mut()
+                        .filter(|c| c.worktree == worktree && c.path == path)
+                    {
+                        c.in_system = true;
+                    }
+                });
+            }
+        });
+    }
+
+    /// Pega dentro de `dir` lo copiado y deja visible la copia. Manda el portapapeles
+    /// del sistema (archivos copiados en el explorador de Windows, Finder…, o con
+    /// "Copiar" aquí); si no tiene archivos, el de Gryphus.
     pub fn paste(self, worktree: u64, dir: String) {
-        let Some(clip) = self.clipboard.get_untracked() else {
+        let clip = self.clipboard.get_untracked();
+        spawn_local(async move {
+            // Si "Copiar" no llegó al sistema, lo que haya allí es más antiguo.
+            let system = match &clip {
+                Some(c) if !c.in_system => Vec::new(),
+                _ => ipc::clipboard_files().await.unwrap_or_default(),
+            };
+            let result = if !system.is_empty() {
+                ipc::import_paths(worktree, system, dir.clone())
+                    .await
+                    .map(|_| ())
+            } else if let Some(c) = clip {
+                ipc::copy_path(c.worktree, c.path, worktree, dir.clone())
+                    .await
+                    .map(|_| ())
+            } else {
+                return;
+            };
+            self.after_paste(worktree, dir, result);
+        });
+    }
+
+    /// Copia archivos de fuera (soltados en el explorador) dentro de `dir`.
+    pub fn import(self, worktree: u64, dir: String, sources: Vec<String>) {
+        if sources.is_empty() {
+            return;
+        }
+        spawn_local(async move {
+            let result = ipc::import_paths(worktree, sources, dir.clone())
+                .await
+                .map(|_| ());
+            self.after_paste(worktree, dir, result);
+        });
+    }
+
+    fn after_paste(&self, worktree: u64, dir: String, result: Result<(), IpcError>) {
+        // Aun con error puede haberse copiado algo: se refresca igual.
+        if result.is_ok() && !dir.is_empty() {
+            self.expanded.update(|set| {
+                set.insert((worktree, dir));
+            });
+        }
+        self.fs_tick.update(|t| *t += 1);
+        self.bump_git();
+        if let Err(e) = result {
+            self.report(e);
+        }
+    }
+
+    /// Pega en la terminal del agente lo que hay en el portapapeles del sistema cuando
+    /// no es texto: las rutas de los archivos copiados o, si no hay archivos (p. ej.
+    /// una captura de pantalla), un Ctrl+V para que el agente lea el portapapeles.
+    pub fn paste_non_text_into_agent(self) {
+        let Some(agent) = self.selected_agent.get_untracked() else {
             return;
         };
         spawn_local(async move {
-            match ipc::copy_path(clip.worktree, clip.path, worktree, dir.clone()).await {
-                Ok(_) => {
-                    if !dir.is_empty() {
-                        self.expanded.update(|set| {
-                            set.insert((worktree, dir));
-                        });
-                    }
-                    self.fs_tick.update(|t| *t += 1);
-                    self.bump_git();
-                }
-                Err(e) => self.report(e),
+            let files = ipc::clipboard_files().await.unwrap_or_default();
+            if files.is_empty() {
+                let _ = ipc::agent_input(agent, "\u{16}".into()).await;
+            } else {
+                self.terminal_paste.set(Some(logic::terminal_paths(&files)));
             }
         });
     }

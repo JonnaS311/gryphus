@@ -440,6 +440,50 @@ impl ProjectSession {
         Ok(target)
     }
 
+    /// Copia archivos o carpetas de fuera de Gryphus (arrastrados desde el sistema o
+    /// pegados del portapapeles) dentro de `to_dir`, con la misma regla de nombres que
+    /// [`Self::copy_path`]. `sources` son rutas absolutas. Devuelve las rutas creadas;
+    /// se detiene en el primer error (lo ya copiado se queda).
+    pub fn import_paths(
+        &self,
+        to_worktree: WorktreeId,
+        sources: &[PathBuf],
+        to_dir: &str,
+    ) -> AppResult<Vec<RelPath>> {
+        let to_root = self.inner.worktree_path(to_worktree)?;
+        let to_dir = RelPath::parse(to_dir)?;
+        let fs = &self.inner.ports.fs;
+        let mut taken: Vec<String> = fs
+            .list_dir(&to_root, &to_dir)?
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
+        let mut created = Vec::with_capacity(sources.len());
+        for source in sources {
+            let invalid = || PathError::InvalidComponent(source.display().to_string());
+            if !source.is_absolute() {
+                return Err(invalid().into());
+            }
+            let (Some(parent), Some(name)) = (source.parent(), source.file_name()) else {
+                return Err(invalid().into());
+            };
+            let name = name.to_str().ok_or_else(invalid)?;
+            let from = RelPath::parse(name)?;
+            let new_name = copy_name(name, |n| taken.iter().any(|t| t.eq_ignore_ascii_case(n)));
+            let target = to_dir.join(&new_name)?;
+            fs.copy(parent, &from, &to_root, &target)?;
+            taken.push(new_name);
+            created.push(target);
+        }
+        Ok(created)
+    }
+
+    /// Ruta absoluta de `path` dentro del worktree (para el portapapeles del sistema).
+    pub fn absolute_path(&self, worktree: WorktreeId, path: &str) -> AppResult<PathBuf> {
+        let root = self.inner.worktree_path(worktree)?;
+        Ok(RelPath::parse(path)?.to_path(&root))
+    }
+
     // ── Git ──────────────────────────────────────────────────────────────────
 
     pub fn git_status(&self, worktree: WorktreeId) -> AppResult<Vec<FileStatus>> {

@@ -30,6 +30,7 @@ pub fn App() -> impl IntoView {
     });
     store.restore_and_load();
     register_events(store);
+    crate::dnd::register(store);
 
     // Guarda de cierre: con agentes activos o cambios sin guardar, la X de la
     // ventana pregunta en vez de detenerlos/descartarlos en silencio.

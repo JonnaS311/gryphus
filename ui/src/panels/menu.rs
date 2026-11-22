@@ -4,7 +4,7 @@
 use leptos::prelude::*;
 
 use crate::logic;
-use crate::store::{Clipboard, MenuTarget, RenameTarget, Store};
+use crate::store::{MenuTarget, RenameTarget, Store};
 
 const MENU_WIDTH: i32 = 200;
 const ITEM_HEIGHT: i32 = 28;
@@ -18,7 +18,6 @@ struct MenuItem {
 }
 
 fn items(store: Store, target: MenuTarget) -> Vec<MenuItem> {
-    let has_clip = store.clipboard.with_untracked(Option::is_some);
     match target {
         MenuTarget::Agent(id) => vec![MenuItem {
             label: "Renombrar",
@@ -56,23 +55,19 @@ fn items(store: Store, target: MenuTarget) -> Vec<MenuItem> {
                 MenuItem {
                     label: "Copiar",
                     enabled: true,
-                    action: Box::new(move || {
-                        store.clipboard.set(Some(Clipboard {
-                            worktree,
-                            path: copy_path.clone(),
-                        }))
-                    }),
+                    action: Box::new(move || store.copy_entry(worktree, copy_path.clone())),
                 },
                 MenuItem {
                     label: "Pegar",
-                    enabled: has_clip,
+                    enabled: true,
                     action: Box::new(move || store.paste(worktree, paste_dir.clone())),
                 },
             ]
         }
+        // "Pegar" siempre activo: puede haber archivos en el portapapeles del sistema.
         MenuTarget::ExplorerRoot { worktree } => vec![MenuItem {
             label: "Pegar",
-            enabled: has_clip,
+            enabled: true,
             action: Box::new(move || store.paste(worktree, String::new())),
         }],
     }

@@ -68,7 +68,12 @@ function monoFont() {
   return { fontFamily: family, fontSize: size };
 }
 
-export function createTerminal(el, onData, onResize) {
+/**
+ * `onPasteNonText()` se llama al pegar (Ctrl+V, Ctrl+Shift+V, Mayús+Insert, menú)
+ * cuando el portapapeles no tiene texto: archivos copiados o una imagen. Rust
+ * decide qué escribir (ui/src/store.rs → paste_non_text_into_agent).
+ */
+export function createTerminal(el, onData, onResize, onPasteNonText) {
   const term = new Terminal({
     ...monoFont(),
     cursorBlink: true,
@@ -88,6 +93,28 @@ export function createTerminal(el, onData, onResize) {
   }
   term.onData((data) => onData(data));
   term.onResize(({ cols, rows }) => onResize(cols, rows));
+
+  // xterm convierte Ctrl+V en ^V y cancela el evento: el navegador nunca pegaba.
+  // Devolver `false` deja la tecla al navegador, que dispara `paste` (o `copy`).
+  term.attachCustomKeyEventHandler((ev) => {
+    if (ev.type !== 'keydown') return true;
+    const ctrl = ev.ctrlKey && !ev.altKey && !ev.metaKey;
+    const key = ev.key.toLowerCase();
+    if (ctrl && key === 'v') return false;
+    if (ev.shiftKey && !ev.ctrlKey && ev.key === 'Insert') return false;
+    // Ctrl+C con texto seleccionado copia; sin selección sigue siendo ^C.
+    if (ctrl && key === 'c' && term.hasSelection()) return false;
+    return true;
+  });
+  // Antes que xterm (fase de captura): si no hay texto, que decida Rust.
+  const onPaste = (ev) => {
+    const text = ev.clipboardData?.getData('text/plain');
+    if (text) return; // xterm lo pega (respeta el bracketed paste)
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+    onPasteNonText();
+  };
+  el.addEventListener('paste', onPaste, true);
 
   const refit = () => {
     if (el.offsetWidth > 0 && el.offsetHeight > 0) {
@@ -161,7 +188,12 @@ export function createTerminal(el, onData, onResize) {
     write(text) {
       term.write(text);
     },
+    /** Como si el usuario lo pegara: va al agente (con bracketed paste si lo pidió). */
+    paste(text) {
+      term.paste(text);
+    },
     dispose() {
+      el.removeEventListener('paste', onPaste, true);
       window.removeEventListener('gryphus:fonts', onFonts);
       observer.disconnect();
       term.dispose();

@@ -261,8 +261,13 @@ impl FsPort for LocalFs {
         if fs::symlink_metadata(&dst).is_ok() {
             return Err(already_exists(to));
         }
-        if same_file(from_root, to_root) && to.starts_with(from) {
-            return Err(into_itself(from));
+        // Por rutas reales y no por `RelPath`: el origen puede estar en otra raíz
+        // (p. ej. una carpeta arrastrada desde fuera) y aun así contener el destino.
+        let dst_parent = dst.parent().unwrap_or(to_root);
+        if let (Ok(s), Ok(d)) = (src.canonicalize(), dst_parent.canonicalize()) {
+            if d.starts_with(&s) {
+                return Err(into_itself(from));
+            }
         }
         copy_recursive(&src, &dst).inspect_err(|_| {
             let _ = if dst.is_dir() {

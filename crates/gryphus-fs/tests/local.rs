@@ -201,3 +201,28 @@ fn rename_changing_only_case_is_allowed() {
         .collect();
     assert_eq!(names, ["A.txt"]);
 }
+
+/// Copiar desde otra raíz (archivos soltados o pegados desde fuera del worktree).
+#[test]
+fn copies_from_outside_the_worktree_but_never_into_itself() {
+    let outside = tempfile::tempdir().unwrap();
+    let wt = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(outside.path().join("docs/sub")).unwrap();
+    std::fs::write(outside.path().join("docs/sub/x.txt"), "x").unwrap();
+    let fs = LocalFs::new();
+    fs.copy(outside.path(), &rel("docs"), wt.path(), &rel("docs"))
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(wt.path().join("docs/sub/x.txt")).unwrap(),
+        "x"
+    );
+
+    // Una carpeta del worktree tomada "desde fuera" (su ruta absoluta) no puede
+    // copiarse dentro de sí misma: antes solo se detectaba con la misma raíz.
+    let parent = wt.path().join("docs");
+    assert_kind(
+        fs.copy(&parent, &rel("sub"), wt.path(), &rel("docs/sub/sub")),
+        PortErrorKind::InvalidInput,
+    );
+    assert!(!wt.path().join("docs/sub/sub").exists());
+}

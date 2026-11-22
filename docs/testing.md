@@ -101,6 +101,7 @@ Corren contra el binario real con config que apunta los tres proveedores a `fake
 11. Clic en la cabecera de una feature la contrae y expande; cada feature tiene un color distinto.
 12. Clic derecho en un agente → renombrar; los agentes nacen con un nombre (no `proveedor #id`).
 13. Explorador con clic derecho: renombrar (Escape cancela; una carpeta renombrada sigue expandida y su pestaña del editor pasa a la ruta nueva; con cambios sin guardar no se renombra), copiar y pegar (`nombre copia.ext` si choca; dentro de una carpeta).
+14. Archivos de fuera de la app (`e2e/tests/explorer.rs`): soltarlos en el explorador los copia (en la carpeta bajo el puntero, en la de un archivo o en la raíz, resaltando el destino); archivos copiados en el sistema se pegan con "Pegar" o Ctrl+V; "Copiar" deja la ruta en el portapapeles del sistema. En la terminal del agente, soltar o pegar archivos escribe sus rutas (con comillas si hace falta) y pegar texto sigue funcionando. El arrastre se simula emitiendo `tauri://drag-*` (WebDriver no arrastra desde fuera de la ventana) y el portapapeles del sistema se prepara con `arboard`.
 
 Los 9 flujos se cubren con 3 pruebas en `e2e/tests/flows.rs`: `open_project_once_per_window` (1-2), `feature_agent_editor_and_diff` (3-8) y `state_persists_across_restarts` (9). **Estado: pasan en Windows 11 (WebView2 158) en ~16 s.**
 
