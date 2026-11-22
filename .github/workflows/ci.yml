@@ -6,10 +6,12 @@ on:
   pull_request:
   workflow_dispatch:
 
-# Un push nuevo a la misma rama/PR cancela la ejecución anterior.
+# En un PR, un push nuevo cancela la ejecución anterior. En main cada commit
+# tiene su propio grupo y termina siempre: con un grupo compartido, GitHub
+# cancelaría la ejecución pendiente aunque cancel-in-progress fuera false.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
