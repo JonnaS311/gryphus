@@ -39,6 +39,7 @@ Gryphus es un entorno de desarrollo de agentes (opencode, Claude Code, Codex) co
 | [testing.md](testing.md) | Estrategia de pruebas (TDD, unitarias, integración, e2e) |
 | [decisions.md](decisions.md) | Decisiones de arquitectura (ADRs) y sus alternativas |
 | [roadmap.md](roadmap.md) | Orden de implementación por hitos |
+| [updates.md](updates.md) | Propuesta de actualizaciones automáticas (updater de Tauri) |
 
 ## Cómo regenerar el diagrama
 
