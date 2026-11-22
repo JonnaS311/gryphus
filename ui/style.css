@@ -173,6 +173,9 @@ input:focus, select:focus { outline: 1px solid var(--accent); outline-offset: -1
 .drop-column[data-drop="right"]::before { display: block; left: 50%; }
 .view-header { display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-bottom: 1px solid var(--border); min-height: 32px; flex: none; }
 .terminal { flex: 1; min-height: 0; padding: 4px 0 0 6px; }
+/* xterm 6 pinta sombras negras arriba e izquierda en cuanto hay scrollback
+   (estilo de VS Code); sobre nuestro fondo se veían como un reborde. */
+.terminal .xterm .xterm-scrollable-element > .shadow { display: none !important; }
 .editor-tabs { display: flex; flex: none; overflow-x: auto; background: var(--panel); border-bottom: 1px solid var(--border); scrollbar-width: thin; }
 .editor-tab { display: flex; align-items: center; gap: 6px; flex: none; max-width: 240px; height: 32px; padding: 0 4px 0 10px; border-right: 1px solid var(--border); color: var(--muted); cursor: pointer; font-size: 12px; user-select: none; }
 .editor-tab:hover { background: var(--panel-2); }
