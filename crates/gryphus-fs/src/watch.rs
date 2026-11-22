@@ -228,5 +228,99 @@ mod tests {
         assert_eq!(rel("/r/.a.txt.gryphus-tmp-1-2"), None);
         assert_eq!(rel("/r"), None);
         assert_eq!(rel("/otro/x"), None);
+        assert_eq!(rel("/r/../x"), None, "solo componentes normales");
+        assert_eq!(rel("/r/sub/.git/x").as_deref(), Some("sub/.git/x"));
+    }
+
+    #[test]
+    fn new_dir_walk_is_recursive_and_bounded() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("a/b")).unwrap();
+        std::fs::write(root.join("a/b/c.txt"), "").unwrap();
+        std::fs::write(root.join("a/d.txt"), "").unwrap();
+
+        let mut seen = Vec::new();
+        let mut budget = 100;
+        walk_new_dir(root, &mut budget, &mut |p| seen.push(p));
+        seen.sort();
+        assert_eq!(
+            seen,
+            [
+                root.join("a"),
+                root.join("a/b"),
+                root.join("a/b/c.txt"),
+                root.join("a/d.txt"),
+            ]
+        );
+        assert_eq!(budget, 96);
+
+        let mut seen = Vec::new();
+        let mut budget = 2;
+        walk_new_dir(root, &mut budget, &mut |p| seen.push(p));
+        assert_eq!(seen.len(), 2);
+        assert_eq!(budget, 0);
+
+        let mut budget = 10;
+        walk_new_dir(&root.join("nada"), &mut budget, &mut |_| {
+            panic!("un directorio inexistente no reporta nada")
+        });
+        assert_eq!(budget, 10);
+    }
+
+    fn rel(s: &str) -> RelPath {
+        RelPath::parse(s).unwrap()
+    }
+
+    #[test]
+    fn ignore_cache_uses_git_info_exclude() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join(".git/info")).unwrap();
+        std::fs::write(root.join(".git/info/exclude"), "local/\n*.tmp\n").unwrap();
+        std::fs::create_dir(root.join("local")).unwrap();
+
+        let mut cache = IgnoreCache::new(root.to_path_buf());
+        assert!(cache.is_ignored(&rel("local")));
+        assert!(cache.is_ignored(&rel("local/x.rs")));
+        assert!(cache.is_ignored(&rel("x.tmp")));
+        assert!(!cache.is_ignored(&rel("src/x.rs")));
+        assert!(
+            !cache.is_ignored(&rel(".git")),
+            "el estado git siempre cuenta"
+        );
+    }
+
+    #[test]
+    fn ignore_cache_reloads_after_clear() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let mut cache = IgnoreCache::new(root.to_path_buf());
+        assert!(!cache.is_ignored(&rel("a.log")));
+
+        std::fs::write(root.join(".gitignore"), "*.log\n").unwrap();
+        assert!(
+            !cache.is_ignored(&rel("a.log")),
+            "sin limpiar, la caché conserva lo leído"
+        );
+        cache.clear();
+        assert!(cache.is_ignored(&rel("a.log")));
+    }
+
+    #[test]
+    fn deeper_gitignore_can_whitelist() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir(root.join("sub")).unwrap();
+        std::fs::write(root.join(".gitignore"), "*.log\n").unwrap();
+        std::fs::write(root.join("sub/.gitignore"), "!keep.log\n").unwrap();
+        // Un `.gitignore` vacío no aporta matcher.
+        std::fs::create_dir(root.join("vacio")).unwrap();
+        std::fs::write(root.join("vacio/.gitignore"), "").unwrap();
+
+        let mut cache = IgnoreCache::new(root.to_path_buf());
+        assert!(!cache.is_ignored(&rel("sub/keep.log")));
+        assert!(cache.is_ignored(&rel("sub/other.log")));
+        assert!(cache.is_ignored(&rel("vacio/a.log")));
     }
 }

@@ -337,3 +337,51 @@ fn copy_recursive(src: &Path, dst: &Path) -> PortResult<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn io_errors_map_to_port_kinds() {
+        let p = Path::new("x");
+        let kind = |k: io::ErrorKind| io_err(io::Error::from(k), p).kind;
+        assert_eq!(kind(io::ErrorKind::NotFound), PortErrorKind::NotFound);
+        assert_eq!(
+            kind(io::ErrorKind::PermissionDenied),
+            PortErrorKind::PermissionDenied
+        );
+        assert_eq!(
+            kind(io::ErrorKind::AlreadyExists),
+            PortErrorKind::AlreadyExists
+        );
+        assert_eq!(kind(io::ErrorKind::Interrupted), PortErrorKind::Io);
+        assert!(io_err(io::Error::from(io::ErrorKind::NotFound), p)
+            .message
+            .starts_with("x: "));
+    }
+
+    #[test]
+    fn defaults_and_limits() {
+        assert_eq!(LocalFs::default().size_limit(), DEFAULT_SIZE_LIMIT);
+        assert_eq!(LocalFs::with_limit(7).size_limit(), 7);
+    }
+
+    #[test]
+    fn copy_recursive_skips_temp_files_and_reports_missing_sources() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src");
+        fs::create_dir(&src).unwrap();
+        fs::write(src.join("a.txt"), "a").unwrap();
+        fs::write(src.join(format!(".a.txt{TMP_MARKER}1-1")), "tmp").unwrap();
+        copy_recursive(&src, &dir.path().join("dst")).unwrap();
+        let names: Vec<_> = fs::read_dir(dir.path().join("dst"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, ["a.txt"]);
+
+        let err = copy_recursive(&dir.path().join("nada"), &dir.path().join("x")).unwrap_err();
+        assert_eq!(err.kind, PortErrorKind::NotFound);
+    }
+}

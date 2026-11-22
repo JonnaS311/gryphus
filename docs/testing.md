@@ -123,10 +123,33 @@ Las e2e ya detectaron un fallo real: el explorador colapsaba las carpetas abiert
 - El contrato IPC no necesita comprobación aparte: `gryphus-ipc` es compartido y cualquier cambio incompatible falla al compilar.
 - Benchmarks (`criterion`) de status, diff y throughput PTY; CI falla con regresiones > 20 % respecto a la línea base.
 
+## Cobertura
+
+Todo PR debe pasar las pruebas unitarias y de integración (`cargo test --workspace --exclude gryphus-e2e`) en Windows, Linux y macOS. En Linux, CI las ejecuta instrumentadas con `cargo cov`, que falla si alguna prueba falla o si la cobertura de líneas baja del **85 %**.
+
+```powershell
+# Una vez
+rustup component add llvm-tools-preview
+cargo install cargo-llvm-cov
+
+cargo cov --summary-only   # resumen por archivo y gate del 85 %
+cargo cov --open           # informe HTML
+```
+
+`cargo cov` es un alias definido en `.cargo/config.toml`. Mide todo el código Rust salvo lo que solo puede ejercitarse con la app real (e2e) y el código de apoyo a pruebas:
+
+| Excluido | Motivo |
+|---|---|
+| `ui/src/{app,main,dnd,ipc,store}.rs`, `ui/src/{bridge,panels,views}/` | Componentes y puente WASM/DOM: los cubren los e2e. La lógica pura (`logic`, `layout`, `settings`, `icons`) sí cuenta. |
+| `src-tauri/src/{commands,events,lib,main,startup}.rs` | Comandos IPC y arranque de Tauri. `dto`, `state`, `shell_env` y `reveal` sí cuentan. |
+| `gryphus-testkit`, `tools/` | Fakes, contratos y binarios auxiliares de prueba. |
+
+Si añades lógica testeable, ponla en un módulo que cuente para la cobertura (p. ej. `ui/src/logic.rs`), no en un componente.
+
 ## Definición de "hecho"
 
 Un cambio está terminado cuando:
 1. Tiene pruebas que fallaban antes del cambio.
-2. Pasa toda la suite local (`cargo test --workspace` y `wasm-pack test --headless` en `ui/`).
+2. Pasa toda la suite local (`cargo test --workspace` y `wasm-pack test --headless` en `ui/`) y `cargo cov` (≥ 85 % de líneas).
 3. Si toca un flujo de usuario, tiene o actualiza un e2e.
 4. Si cambia la arquitectura o el IPC, actualiza `docs/` (y el diagrama) en el mismo commit.

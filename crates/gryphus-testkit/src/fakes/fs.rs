@@ -183,12 +183,29 @@ impl FakeFs {
     }
 
     fn notify(&self, paths: Vec<RelPath>) {
-        let watchers: Vec<_> = lock(&self.inner.watchers)
+        for sink in self.watchers() {
+            sink.changed(paths.clone());
+        }
+    }
+
+    fn watchers(&self) -> Vec<Arc<dyn FsChangeSink>> {
+        lock(&self.inner.watchers)
             .iter()
             .map(|(_, sink)| sink.clone())
-            .collect();
-        for sink in watchers {
-            sink.changed(paths.clone());
+            .collect()
+    }
+
+    /// Entrega a los watchers un lote tal cual lo haría el adaptador real (p. ej.
+    /// `.git`, que resume cualquier cambio interno de git), sin tocar el árbol.
+    pub fn emit_changed(&self, paths: &[&str]) {
+        self.notify(paths.iter().map(|p| parse_rel(p)).collect());
+    }
+
+    /// Como [`FakeFs::emit_changed`], pero como rutas ignoradas por `.gitignore`.
+    pub fn emit_ignored(&self, paths: &[&str]) {
+        let paths: Vec<RelPath> = paths.iter().map(|p| parse_rel(p)).collect();
+        for sink in self.watchers() {
+            sink.changed_ignored(paths.clone());
         }
     }
 
@@ -206,6 +223,10 @@ impl FakeFs {
 }
 
 /// `a/b/c` → `["a", "a/b", "a/b/c"]`.
+fn parse_rel(rel: &str) -> RelPath {
+    RelPath::parse(rel).expect("ruta relativa válida")
+}
+
 fn prefixes(rel: &RelPath) -> Vec<String> {
     let mut acc = String::new();
     rel.components()

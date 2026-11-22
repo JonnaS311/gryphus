@@ -929,6 +929,95 @@ fn disk_changes_publish_files_and_git_events() {
     assert!(events.contains(&DomainEvent::GitChanged { worktree: main }));
 }
 
+/// Un cambio dentro del `.git` del principal (p. ej. `git worktree add` desde una
+/// terminal) relee los worktrees y avisa del estado git de todos.
+#[test]
+fn git_internal_change_in_main_refreshes_worktrees_and_all_git_states() {
+    let w = World::new();
+    let s = w.open();
+    let main = main_wt(&s);
+    let (_, feature_wt) = new_feature(&s, "login");
+    w.git
+        .add_worktree(
+            Path::new(ROOT),
+            &NewWorktree {
+                path: PathBuf::from("/externo"),
+                branch: BranchName::parse("externo").unwrap(),
+                create_branch: true,
+                base: None,
+            },
+        )
+        .unwrap();
+    w.events.take();
+
+    w.fs.emit_changed(&[".git"]);
+
+    let events = w.events.take();
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, DomainEvent::FilesChanged { .. })),
+        ".git no es un archivo del explorador: {events:?}"
+    );
+    assert!(events.contains(&DomainEvent::WorktreesChanged));
+    let externo = s
+        .project()
+        .worktree_by_path(Path::new("/externo"))
+        .expect("el worktree externo se detecta")
+        .id();
+    for wt in [main, feature_wt, externo] {
+        assert!(
+            events.contains(&DomainEvent::GitChanged { worktree: wt }),
+            "falta GitChanged de {wt:?}: {events:?}"
+        );
+    }
+}
+
+#[test]
+fn git_internal_change_with_files_publishes_both() {
+    let w = World::new();
+    let s = w.open();
+    let main = main_wt(&s);
+    w.events.take();
+    w.fs.emit_changed(&[".git", "src/a.rs"]);
+    let events = w.events.take();
+    assert!(events.contains(&DomainEvent::FilesChanged {
+        worktree: main,
+        paths: vec![gryphus_core::RelPath::parse("src/a.rs").unwrap()],
+    }));
+    assert!(events.contains(&DomainEvent::GitChanged { worktree: main }));
+}
+
+/// Lo ignorado por `.gitignore` actualiza el explorador, pero no relanza git.
+#[test]
+fn gitignored_changes_publish_files_but_not_git() {
+    let w = World::new();
+    let s = w.open();
+    let main = main_wt(&s);
+    w.events.take();
+    w.fs.emit_ignored(&["target/debug/app"]);
+    let events = w.events.take();
+    assert_eq!(
+        events,
+        [DomainEvent::FilesChanged {
+            worktree: main,
+            paths: vec![gryphus_core::RelPath::parse("target/debug/app").unwrap()],
+        }]
+    );
+}
+
+#[test]
+fn closed_session_stops_watching() {
+    let w = World::new();
+    let s = w.open();
+    s.close().unwrap();
+    w.events.take();
+    w.fs.emit_changed(&["a.txt"]);
+    w.fs.emit_ignored(&["target/x"]);
+    let events = w.events.take();
+    assert!(events.is_empty(), "{events:?}");
+}
+
 #[test]
 fn git_queries_resolve_the_worktree() {
     let w = World::new();

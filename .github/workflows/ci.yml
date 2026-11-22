@@ -44,7 +44,11 @@ jobs:
 
       - uses: taiki-e/install-action@v2
         with:
-          tool: trunk
+          tool: trunk,cargo-llvm-cov
+
+      - name: llvm-tools (cobertura)
+        if: runner.os == 'Linux'
+        run: rustup component add llvm-tools-preview
 
       - name: Formato
         run: cargo fmt --all --check
@@ -59,9 +63,17 @@ jobs:
       - name: Clippy (UI en wasm32)
         run: cargo clippy -p gryphus-ui --target wasm32-unknown-unknown -- -D warnings
 
+      # Todo PR debe pasar las pruebas unitarias y de integración (sin e2e).
       # --no-fail-fast: si falla un binario de pruebas, los demás se ejecutan igual
-      - name: Pruebas
-        run: cargo test --workspace --no-fail-fast
+      - name: Pruebas unitarias
+        if: runner.os != 'Linux'
+        run: cargo test --workspace --exclude gryphus-e2e --no-fail-fast
+
+      # En Linux las mismas pruebas se ejecutan instrumentadas: falla si alguna
+      # prueba falla o si la cobertura de líneas baja del 85 % (alias en .cargo/config.toml).
+      - name: Pruebas unitarias + cobertura (>= 85 %)
+        if: runner.os == 'Linux'
+        run: cargo cov --no-fail-fast --summary-only
 
       - uses: actions/setup-node@v7
         with:

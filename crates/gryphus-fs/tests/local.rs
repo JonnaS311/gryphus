@@ -202,6 +202,139 @@ fn rename_changing_only_case_is_allowed() {
     assert_eq!(names, ["A.txt"]);
 }
 
+#[test]
+fn the_root_is_not_a_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let fs = LocalFs::new();
+    let root = RelPath::default();
+    assert_kind(fs.read_file(dir.path(), &root), PortErrorKind::InvalidInput);
+    assert_kind(
+        fs.write_file(dir.path(), &root, b"x"),
+        PortErrorKind::InvalidInput,
+    );
+    fs.write_file(dir.path(), &rel("a.txt"), b"a").unwrap();
+    assert_kind(
+        fs.copy(dir.path(), &root, dir.path(), &rel("b")),
+        PortErrorKind::InvalidInput,
+    );
+    assert_kind(
+        fs.copy(dir.path(), &rel("a.txt"), dir.path(), &root),
+        PortErrorKind::InvalidInput,
+    );
+}
+
+#[test]
+fn utf8_text_with_nul_bytes_is_binary() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.bin"), b"hola\0mundo").unwrap();
+    assert_eq!(
+        LocalFs::new().read_file(dir.path(), &rel("a.bin")).unwrap(),
+        gryphus_core::ports::FileContent::Binary { size: 10 }
+    );
+}
+
+#[test]
+fn target_parent_must_be_a_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let fs = LocalFs::new();
+    fs.write_file(dir.path(), &rel("a.txt"), b"a").unwrap();
+    fs.write_file(dir.path(), &rel("b.txt"), b"b").unwrap();
+    assert_kind(
+        fs.rename(dir.path(), &rel("a.txt"), &rel("b.txt/a.txt")),
+        PortErrorKind::InvalidInput,
+    );
+    assert_kind(
+        fs.copy(dir.path(), &rel("a.txt"), dir.path(), &rel("b.txt/a.txt")),
+        PortErrorKind::InvalidInput,
+    );
+}
+
+#[test]
+fn copying_a_directory_into_itself_within_one_root_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let fs = LocalFs::new();
+    fs.write_file(dir.path(), &rel("d/x.txt"), b"x").unwrap();
+    assert_kind(
+        fs.copy(dir.path(), &rel("d"), dir.path(), &rel("d/copia")),
+        PortErrorKind::InvalidInput,
+    );
+    assert!(!dir.path().join("d/copia").exists());
+}
+
+#[test]
+fn list_dir_marks_symlinks_and_rejects_files() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("real")).unwrap();
+    std::fs::write(dir.path().join("a.txt"), "").unwrap();
+    let fs = LocalFs::new();
+    assert_kind(
+        fs.list_dir(dir.path(), &rel("a.txt")),
+        PortErrorKind::InvalidInput,
+    );
+    if !make_dir_link(&dir.path().join("real"), &dir.path().join("enlace")) {
+        eprintln!("omitido: este sistema no permite crear symlinks sin privilegios");
+        return;
+    }
+    let entries = fs.list_dir(dir.path(), &RelPath::default()).unwrap();
+    let link = entries.iter().find(|e| e.name == "enlace").unwrap();
+    assert_eq!(link.kind, gryphus_core::ports::EntryKind::Symlink);
+}
+
+/// Al editar `.gitignore` el watcher recarga sus reglas.
+#[test]
+fn watcher_reloads_rules_when_gitignore_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let sink = Arc::new(CollectingFsSink::default());
+    let _sub = LocalFs::new().watch(root, sink.clone()).unwrap();
+    std::fs::write(root.join("a.log"), "x").unwrap();
+    assert!(wait_until(Duration::from_secs(3), || sink.contains("a.log")));
+    assert!(!sink.ignored().iter().any(|p| p.as_str() == "a.log"));
+
+    std::fs::write(root.join(".gitignore"), "*.log\n").unwrap();
+    assert!(wait_until(Duration::from_secs(3), || sink.contains(".gitignore")));
+    std::thread::sleep(Duration::from_millis(300));
+    std::fs::write(root.join("b.log"), "x").unwrap();
+    assert!(
+        wait_until(Duration::from_secs(3), || sink
+            .ignored()
+            .iter()
+            .any(|p| p.as_str() == "b.log")),
+        "b.log debía llegar como ignorado: {:?}",
+        sink.ignored()
+    );
+}
+
+/// Lo que se crea dentro de un directorio nuevo se reporta aunque el SO no lo avise.
+#[test]
+fn watcher_reports_contents_of_new_directories() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let sink = Arc::new(CollectingFsSink::default());
+    let _sub = LocalFs::new().watch(root, sink.clone()).unwrap();
+    std::fs::create_dir_all(root.join("nuevo/sub")).unwrap();
+    std::fs::write(root.join("nuevo/sub/x.txt"), "x").unwrap();
+    assert!(
+        wait_until(Duration::from_secs(3), || sink.contains("nuevo/sub/x.txt")),
+        "{:?}",
+        sink.paths()
+    );
+}
+
+/// Symlink de directorio; en Windows, si no hay privilegios, un junction.
+fn make_dir_link(target: &std::path::Path, link: &std::path::Path) -> bool {
+    #[cfg(unix)]
+    return std::os::unix::fs::symlink(target, link).is_ok();
+    #[cfg(windows)]
+    return std::os::windows::fs::symlink_dir(target, link).is_ok()
+        || std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .output()
+            .is_ok_and(|o| o.status.success());
+}
+
 /// Copiar desde otra raíz (archivos soltados o pegados desde fuera del worktree).
 #[test]
 fn copies_from_outside_the_worktree_but_never_into_itself() {

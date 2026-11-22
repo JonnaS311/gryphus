@@ -1,0 +1,14 @@
+[alias]
+# Pruebas unitarias y de integración (sin e2e) con cobertura; falla por debajo del 85 % de líneas.
+# Requiere `cargo install cargo-llvm-cov` y `rustup component add llvm-tools-preview`.
+# Se excluye lo que solo puede ejercitarse con la app real (e2e) y el código de apoyo a pruebas:
+#   - ui: componentes, paneles, vistas y puente WASM/DOM (la lógica pura de ui sí cuenta)
+#   - src-tauri: comandos IPC y arranque de Tauri (dto, state, shell_env y reveal sí cuentan)
+#   - gryphus-testkit y tools/: fakes, contratos y binarios auxiliares de prueba
+# Ver docs/testing.md#cobertura.
+cov = [
+    "llvm-cov", "--workspace", "--exclude", "gryphus-e2e",
+    "--ignore-filename-regex",
+    '(ui[\\/]src[\\/](app|main|dnd|ipc|store)\.rs|ui[\\/]src[\\/](bridge|panels|views)[\\/]|src-tauri[\\/]src[\\/](commands|events|lib|main|startup)\.rs|gryphus-testkit[\\/]|tools[\\/])',
+    "--fail-under-lines", "85",
+]
