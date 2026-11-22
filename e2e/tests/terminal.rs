@@ -124,6 +124,49 @@ async fn switching_agents_restores_the_screen() {
     app.quit().await;
 }
 
+/// Sin reborde negro alrededor de la terminal: en xterm 6 `.xterm-viewport` cubre
+/// también el padding del contenedor con fondo #000, y sus sombras de scroll son
+/// negras. Nada visible dentro de la terminal debe pintarse de negro.
+#[tokio::test(flavor = "multi_thread")]
+async fn terminal_has_no_black_border() {
+    e2e!();
+    let _serial = SERIAL.lock().await;
+    let fx = Fixture::new();
+    let app = App::start(&fx).await;
+    app.open_project(&fx.root()).await;
+    app.click("#new-feature").await;
+    app.type_into("#feature-name", "borde").await;
+    app.click("#create-feature").await;
+    app.wait_css(r#".feature[data-feature="borde"]"#).await;
+    launch_agent(&app, "borde").await;
+    app.wait_terminal("fake-agent ready").await;
+    // Con scrollback (más líneas que filas) para que xterm active su scroll.
+    app.click(".terminal").await;
+    for i in 0..60 {
+        app.type_active(&format!("linea-{i}{ENTER}")).await;
+    }
+    app.wait_terminal("echo: linea-59").await;
+    app.screenshot("terminal-sin-borde").await;
+
+    let black = app
+        .script(
+            "const t = document.querySelector('.terminal');
+             return [t, ...t.querySelectorAll('*')]
+               .filter(el => {
+                 const cs = getComputedStyle(el);
+                 const r = el.getBoundingClientRect();
+                 if (r.width < 2 || r.height < 2 || cs.display === 'none') return false;
+                 return cs.backgroundColor === 'rgb(0, 0, 0)'
+                   || /rgb\\(0, 0, 0\\)/.test(cs.boxShadow);
+               })
+               .map(el => `${el.tagName}.${el.className}`);",
+            vec![],
+        )
+        .await;
+    assert_eq!(black, serde_json::json!([]), "elementos negros en la terminal");
+    app.quit().await;
+}
+
 /// Pegar sin texto ni archivos en el portapapeles (una captura de pantalla) pide al
 /// CLI que lea la imagen: Claude Code en Windows con Alt+V, si no con Ctrl+V.
 #[tokio::test(flavor = "multi_thread")]
