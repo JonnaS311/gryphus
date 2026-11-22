@@ -1,6 +1,8 @@
 //! Raíz de la UI: bienvenida o espacio de trabajo, eventos y atajos globales.
 
-use gryphus_ipc::{event, AgentStatusEvent, FeatureEvent, FilesChangedEvent, WorktreeEvent};
+use gryphus_ipc::{
+    event, AgentEvent, AgentStatusEvent, FeatureEvent, FilesChangedEvent, WorktreeEvent,
+};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 
@@ -57,6 +59,17 @@ pub fn App() -> impl IntoView {
             }
         });
     });
+
+    // Aviso de "agente terminó": se apaga en cuanto su terminal queda a la vista
+    // (seleccionarlo, volver a la pestaña Agente o devolver el foco a la ventana).
+    Effect::new(move |_| {
+        if store.center.with(|c| c.is_visible(CenterView::Agent)) {
+            if let Some(agent) = store.selected_agent.get() {
+                store.agent_seen(agent);
+            }
+        }
+    });
+    let _focus = window_event_listener(leptos::ev::focus, move |_| store.window_focused());
 
     let _keys = window_event_listener(leptos::ev::keydown, move |ev| {
         if !crate::bridge::dom::primary_mod(&ev) {
@@ -115,6 +128,9 @@ fn register_events(store: Store) {
         // caché, o mientras un `get_project` anterior al cambio sigue en vuelo y lo
         // pisaría al volver: se pide el estado de nuevo (los cambios de estado son raros).
         store.refresh_project();
+    });
+    listen(event::AGENT_IDLE, move |e: AgentEvent| {
+        store.agent_idle(e.agent)
     });
     listen(event::FILES_CHANGED, move |e: FilesChangedEvent| {
         store.fs_change.set((e.worktree, e.paths));

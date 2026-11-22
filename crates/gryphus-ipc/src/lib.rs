@@ -58,6 +58,8 @@ pub mod event {
     pub const FEATURE_REMOVED: &str = "feature:removed";
     /// Payload: [`super::AgentStatusEvent`]
     pub const AGENT_STATUS: &str = "agent:status";
+    /// El agente terminó su tarea y espera instrucciones. Payload: [super::AgentEvent]
+    pub const AGENT_IDLE: &str = "agent:idle";
     /// Payload: [`super::FilesChangedEvent`]
     pub const FILES_CHANGED: &str = "fs:changed";
     /// Payload: [`super::WorktreeEvent`]
@@ -380,6 +382,11 @@ pub struct FeatureEvent {
 pub struct AgentStatusEvent {
     pub agent: u64,
     pub status: AgentStatusDto,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentEvent {
+    pub agent: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

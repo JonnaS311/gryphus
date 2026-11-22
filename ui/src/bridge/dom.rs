@@ -1,4 +1,4 @@
-//! Utilidades del DOM que Leptos no cubre (desplazamiento a un elemento,
+//! Utilidades del DOM que Leptos no cubre (desplazamiento a un elemento, foco,
 //! plataforma y modificador principal de los atajos).
 
 use std::sync::OnceLock;
@@ -20,6 +20,14 @@ pub fn primary_mod(ev: &web_sys::KeyboardEvent) -> bool {
     } else {
         ev.ctrl_key()
     }
+}
+
+/// `true` si la ventana tiene el foco (el usuario la está mirando).
+pub fn has_focus() -> bool {
+    web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.has_focus().ok())
+        .unwrap_or(true)
 }
 
 /// Abre (si es un `<details>`) y desplaza hasta el elemento con ese `id`.

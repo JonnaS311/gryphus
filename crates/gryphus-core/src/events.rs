@@ -14,6 +14,11 @@ pub enum DomainEvent {
         agent: AgentId,
         status: AgentStatus,
     },
+    /// El agente terminó lo que se le pidió y espera instrucciones (heurística de
+    /// `gryphus-app`: silencio tras trabajar o aviso de terminal).
+    AgentIdle {
+        agent: AgentId,
+    },
     FilesChanged {
         worktree: WorktreeId,
         paths: Vec<RelPath>,

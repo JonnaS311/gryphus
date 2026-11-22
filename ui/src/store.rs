@@ -138,6 +138,8 @@ pub struct Store {
     pub menu: RwSignal<Option<ContextMenu>>,
     pub renaming: RwSignal<Option<RenameTarget>>,
     pub clipboard: RwSignal<Option<Clipboard>>,
+    /// Agentes que terminaron su tarea y aún no se han revisado (su feature parpadea).
+    pub attention: RwSignal<HashSet<u64>>,
 }
 
 impl Store {
@@ -172,7 +174,57 @@ impl Store {
             menu: RwSignal::new(None),
             renaming: RwSignal::new(None),
             clipboard: RwSignal::new(None),
+            attention: RwSignal::new(HashSet::new()),
         }
+    }
+
+    /// Un agente terminó su tarea. Si el usuario ya lo está mirando no hace falta avisar.
+    pub fn agent_idle(&self, agent: u64) {
+        let watching = self.selected_agent.get_untracked() == Some(agent)
+            && self
+                .center
+                .with_untracked(|c| c.is_visible(CenterView::Agent))
+            && crate::bridge::dom::has_focus();
+        if !watching {
+            self.attention.update(|set| {
+                set.insert(agent);
+            });
+        }
+    }
+
+    /// El usuario revisó el agente: deja de avisar.
+    pub fn agent_seen(&self, agent: u64) {
+        if self.attention.with_untracked(|set| set.contains(&agent)) {
+            self.attention.update(|set| {
+                set.remove(&agent);
+            });
+        }
+    }
+
+    /// La ventana recuperó el foco: el agente visible cuenta como revisado.
+    pub fn window_focused(&self) {
+        if self
+            .center
+            .with_untracked(|c| c.is_visible(CenterView::Agent))
+        {
+            if let Some(agent) = self.selected_agent.get_untracked() {
+                self.agent_seen(agent);
+            }
+        }
+    }
+
+    /// Primer agente de la feature pendiente de revisar.
+    pub fn pending_agent_of(&self, feature: u64) -> Option<(u64, u64)> {
+        self.attention.with(|set| {
+            self.project.with(|p| {
+                p.as_ref().and_then(|p| {
+                    logic::agents_of(p, feature)
+                        .into_iter()
+                        .find(|a| set.contains(&a.id))
+                        .map(|a| (a.id, a.worktree))
+                })
+            })
+        })
     }
 
     pub fn is_collapsed(&self, feature: u64) -> bool {
@@ -572,6 +624,7 @@ impl Store {
     }
 
     pub fn select_agent(&self, agent: u64, worktree: u64, feature: u64) {
+        self.agent_seen(agent);
         self.selected_agent.set(Some(agent));
         self.selected_feature.set(Some(feature));
         self.active_worktree.set(Some(worktree));

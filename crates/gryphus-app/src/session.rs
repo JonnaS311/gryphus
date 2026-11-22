@@ -2,7 +2,8 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
+use std::time::Instant;
 
 use gryphus_core::ports::{
     AgentChunk, AgentExit, AgentRuntimePort, Branch, ChunkSink, Diff, DiffBase, DirEntry,
@@ -14,6 +15,7 @@ use gryphus_core::{
     FeatureId, FeatureName, PathError, Project, ProjectId, ProviderId, RelPath, WorktreeId,
 };
 
+use crate::activity::{Activity, ActivitySink, POLL_EVERY};
 use crate::error::AppResult;
 use crate::watch::WatchSink;
 
@@ -53,6 +55,10 @@ pub(crate) struct Inner {
     /// así una instantánea antigua nunca se escribe después de una más reciente.
     save: Mutex<()>,
     watches: Mutex<HashMap<WorktreeId, Subscription>>,
+    /// Detección de "terminó y espera instrucciones" de los agentes vivos (ver `activity`).
+    activity: Mutex<HashMap<AgentId, Activity>>,
+    /// Suscripciones internas a la salida de cada agente vivo.
+    monitors: Mutex<HashMap<AgentId, Subscription>>,
 }
 
 /// Estado vivo de un proyecto. Clonar es barato (comparte el estado).
@@ -96,8 +102,11 @@ impl ProjectSession {
             project: Mutex::new(project),
             save: Mutex::new(()),
             watches: Mutex::new(HashMap::new()),
+            activity: Mutex::new(HashMap::new()),
+            monitors: Mutex::new(HashMap::new()),
         });
         inner.ensure_watches();
+        spawn_idle_ticker(Arc::downgrade(&inner));
         Ok(Self { inner })
     }
 
@@ -327,6 +336,9 @@ impl ProjectSession {
     }
 
     pub fn agent_input(&self, agent: AgentId, bytes: &[u8]) -> AppResult<()> {
+        if let Some(a) = lock(&self.inner.activity).get_mut(&agent) {
+            a.on_input(bytes, Instant::now());
+        }
         Ok(self.inner.ports.agents.write(agent, bytes)?)
     }
 
@@ -616,6 +628,7 @@ impl Inner {
         });
         match self.ports.agents.spawn(spec, on_exit) {
             Ok(()) => {
+                self.monitor(agent);
                 // Si el proceso ya terminó (salida instantánea), se respeta ese estado.
                 let still_starting = lock(&self.project)
                     .agent(agent)
@@ -638,6 +651,9 @@ impl Inner {
     }
 
     fn set_status(&self, agent: AgentId, status: AgentStatus) {
+        if !status.is_active() {
+            self.unmonitor(agent);
+        }
         if self
             .mutate(|p| p.set_agent_status(agent, status.clone()))
             .is_ok()
@@ -645,6 +661,66 @@ impl Inner {
             self.publish(DomainEvent::AgentStatusChanged { agent, status });
         }
     }
+
+    /// Empieza a vigilar la salida del agente para avisar cuando termine su tarea.
+    fn monitor(self: &Arc<Self>, agent: AgentId) {
+        lock(&self.activity).insert(agent, Activity::new(Instant::now()));
+        let sink = Arc::new(ActivitySink {
+            session: Arc::downgrade(self),
+            agent,
+        });
+        match self.ports.agents.attach(agent, sink) {
+            // Sin la vigilancia el agente sigue siendo usable; solo no habrá aviso.
+            Ok(sub) => {
+                let old = lock(&self.monitors).insert(agent, sub);
+                drop(old);
+            }
+            Err(_) => {
+                lock(&self.activity).remove(&agent);
+            }
+        }
+    }
+
+    fn unmonitor(&self, agent: AgentId) {
+        lock(&self.activity).remove(&agent);
+        // Se suelta fuera del lock: cancelar toma el lock de salida del runtime.
+        let sub = lock(&self.monitors).remove(&agent);
+        drop(sub);
+    }
+
+    /// Salida en vivo de un agente (desde [`ActivitySink`]).
+    pub(crate) fn agent_output(&self, agent: AgentId, bytes: &[u8]) {
+        let notified = lock(&self.activity)
+            .get_mut(&agent)
+            .is_some_and(|a| a.on_output(bytes, Instant::now()));
+        if notified {
+            self.publish(DomainEvent::AgentIdle { agent });
+        }
+    }
+
+    /// Agentes que acaban de quedar en silencio tras trabajar.
+    fn poll_idle(&self) -> Vec<AgentId> {
+        let now = Instant::now();
+        lock(&self.activity)
+            .iter_mut()
+            .filter_map(|(id, a)| a.poll(now).then_some(*id))
+            .collect()
+    }
+}
+
+/// Revisa periódicamente el silencio de los agentes. Termina al cerrarse la sesión.
+fn spawn_idle_ticker(session: Weak<Inner>) {
+    let _ = std::thread::Builder::new()
+        .name("gryphus-agent-idle".into())
+        .spawn(move || loop {
+            std::thread::sleep(POLL_EVERY);
+            let Some(inner) = session.upgrade() else {
+                return;
+            };
+            for agent in inner.poll_idle() {
+                inner.publish(DomainEvent::AgentIdle { agent });
+            }
+        });
 }
 
 #[cfg(test)]

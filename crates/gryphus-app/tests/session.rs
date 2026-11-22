@@ -13,7 +13,8 @@ use gryphus_core::{
     WorktreeId,
 };
 use gryphus_testkit::{
-    CollectingChunkSink, FakeAgentRuntime, FakeFs, FakeGit, FakeStore, RecordingEventSink,
+    wait_until, CollectingChunkSink, FakeAgentRuntime, FakeFs, FakeGit, FakeStore,
+    RecordingEventSink,
 };
 
 const ROOT: &str = "/repo";
@@ -578,6 +579,44 @@ fn input_and_output_flow_through_the_session() {
     s.agent_resize(agent, gryphus_core::ports::TermSize { cols: 90, rows: 30 })
         .unwrap();
     assert_eq!(w.agents.size(agent).unwrap().cols, 90);
+}
+
+#[test]
+fn agent_that_goes_quiet_after_an_order_is_reported_idle_once() {
+    let w = World::new();
+    let s = w.open();
+    let (f, wt) = new_feature(&s, "login");
+    let agent = s.spawn_agent(f, wt, ProviderId::Claude).unwrap();
+    let idle = || {
+        w.events
+            .events()
+            .iter()
+            .filter(|e| **e == DomainEvent::AgentIdle { agent })
+            .count()
+    };
+
+    // Salida sin orden previa (arranque, tecleo) no cuenta.
+    s.agent_input(agent, b"tecleando").unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    assert_eq!(idle(), 0);
+
+    s.agent_input(agent, b"hola\r").unwrap();
+    assert!(wait_until(std::time::Duration::from_secs(8), || idle() == 1));
+    std::thread::sleep(std::time::Duration::from_secs(1));
+    assert_eq!(idle(), 1, "se avisa una sola vez por orden");
+}
+
+#[test]
+fn terminal_bell_reports_the_agent_idle_at_once() {
+    let w = World::new();
+    let s = w.open();
+    let (f, wt) = new_feature(&s, "login");
+    let agent = s.spawn_agent(f, wt, ProviderId::Claude).unwrap();
+    s.agent_input(agent, b"\x07\r").unwrap();
+    assert!(w
+        .events
+        .events()
+        .contains(&DomainEvent::AgentIdle { agent }));
 }
 
 #[test]

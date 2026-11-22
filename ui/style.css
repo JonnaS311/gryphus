@@ -113,6 +113,23 @@ input:focus, select:focus { outline: 1px solid var(--accent); outline-offset: -1
 .feature-header .chev { color: hsl(var(--feature-hue, 210) 70% 72%); }
 .feature-count { font-size: 11px; color: var(--muted); padding: 0 6px; border-radius: 8px; background: var(--panel-2); }
 .feature-name { font-weight: 600; flex: 1; }
+/* Un agente de la feature terminó y espera instrucciones: parpadea hasta revisarlo. */
+@keyframes feature-attention {
+  0%, 100% { background: hsl(var(--feature-hue, 210) 70% 55% / 0.14); box-shadow: none; }
+  50% { background: rgba(239, 107, 115, 0.30); box-shadow: 0 0 0 1px var(--red); }
+}
+@keyframes attention-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 107, 115, 0.7); }
+  50% { box-shadow: 0 0 0 4px rgba(239, 107, 115, 0); }
+}
+.feature.attention .feature-header { animation: feature-attention 1.2s ease-in-out infinite; }
+.attention-dot { flex: none; width: 12px; height: 12px; padding: 0; margin: 0 4px; border: none; border-radius: 50%; background: var(--red); cursor: pointer; animation: attention-pulse 1.2s ease-in-out infinite; }
+.attention-dot:hover { filter: brightness(1.15); }
+.agent.attention .agent-name { color: var(--red); font-weight: 600; }
+@media (prefers-reduced-motion: reduce) {
+  .feature.attention .feature-header { animation: none; background: rgba(239, 107, 115, 0.22); }
+  .attention-dot { animation: none; }
+}
 .worktrees, .agents { list-style: none; margin: 0; padding: 0; }
 .worktree, .agent { display: flex; align-items: center; gap: 6px; padding: 3px 8px 3px 20px; cursor: pointer; }
 .worktree:hover, .agent:hover { background: var(--panel-2); }

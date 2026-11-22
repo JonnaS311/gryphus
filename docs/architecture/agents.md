@@ -50,6 +50,15 @@ AgentProc
 - **Apagado:** `kill` marca el agente y lo termina; la salida se reporta como `Exited { code: None }`. `kill_all()` se usa al cerrar la app.
 - **Cierre robusto:** si el lector no recibe EOF tras cerrar la PTY, se da por terminado a los 2 s para que `on_exit` siempre llegue.
 
+## Aviso de "terminó y espera instrucciones"
+
+`gryphus-app` (`activity.rs`) se suscribe a la salida de cada agente vivo y publica `DomainEvent::AgentIdle` (evento `agent:idle`) cuando:
+
+- tras una orden del usuario (entrada con Enter) el agente produjo salida y luego quedó **4 s en silencio** (mientras trabajan, los CLIs animan un indicador), o
+- emite un aviso de terminal: campana (BEL) suelta, OSC 9 (salvo `9;4`, progreso) u OSC 777.
+
+Se avisa una sola vez por orden. La UI marca la feature (cabecera parpadeando y botón rojo) salvo que el usuario ya esté mirando ese agente, y el aviso se apaga al abrirlo.
+
 ## Persistencia de agentes
 
 El **registro** de agentes (id, feature, worktree, proveedor) se persiste en el estado del proyecto. Los **procesos** no sobreviven al cierre de la app: al reabrir el proyecto, los agentes aparecen como `Exited` y se pueden reiniciar con un clic en el mismo worktree.

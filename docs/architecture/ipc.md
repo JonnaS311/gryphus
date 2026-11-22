@@ -81,6 +81,7 @@ Se emiten con `emit_to(etiqueta)`, **solo a la ventana del proyecto**. Son notif
 |---|---|---|
 | `feature:changed` / `feature:removed` | `FeatureEvent { feature }` | refrescar el proyecto |
 | `agent:status` | `AgentStatusEvent { agent, status }` | actualizar el indicador |
+| `agent:idle` | `AgentEvent { agent }` | avisar en su feature que terminó y espera instrucciones |
 | `fs:changed` | `FilesChangedEvent { worktree, paths }` | refrescar el explorador y el archivo abierto |
 | `git:changed` | `WorktreeEvent { worktree }` | volver a pedir status/diff si está visible |
 | `worktrees:changed` | `()` | refrescar el proyecto |

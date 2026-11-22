@@ -9,6 +9,7 @@
 //! Ver docs/architecture/overview.md.
 #![forbid(unsafe_code)]
 
+mod activity;
 mod error;
 mod session;
 mod watch;
