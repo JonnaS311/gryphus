@@ -1,7 +1,9 @@
 //! Reenvía los `DomainEvent` de una sesión a su ventana (y solo a ella).
 
 use gryphus_core::{DomainEvent, EventSink};
-use gryphus_ipc::{event, AgentStatusEvent, FeatureEvent, FilesChangedEvent, WorktreeEvent};
+use gryphus_ipc::{
+    event, AgentEvent, AgentStatusEvent, FeatureEvent, FilesChangedEvent, WorktreeEvent,
+};
 use tauri::{AppHandle, Emitter};
 
 use crate::dto;
@@ -34,6 +36,9 @@ impl EventSink for TauriEvents {
                     status: dto::status(&status),
                 },
             ),
+            DomainEvent::AgentIdle { agent } => {
+                app.emit_to(target, event::AGENT_IDLE, AgentEvent { agent: agent.get() })
+            }
             DomainEvent::FilesChanged { worktree, paths } => app.emit_to(
                 target,
                 event::FILES_CHANGED,

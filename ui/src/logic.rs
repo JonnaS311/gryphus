@@ -1,5 +1,7 @@
 //! Reglas de presentación puras (sin Leptos ni JS): se prueban con `cargo test`.
 
+use std::collections::HashMap;
+
 use gryphus_ipc::{
     AgentDto, AgentStatusDto, BranchDto, FeatureDto, FileDiffDto, FileStateDto, FileStatusDto,
     LineKindDto, ProjectDto, WorktreeDto,
@@ -110,10 +112,44 @@ pub fn rename_selection(name: &str, is_file: bool) -> u32 {
     end.encode_utf16().count() as u32
 }
 
+/// Paleta de tonos (HSL) de las features: (tono, nombre). Es también la lista
+/// limitada del selector de color del menú contextual.
+pub const FEATURE_HUES: [(u16, &str); 8] = [
+    (210, "Azul"),
+    (140, "Verde"),
+    (30, "Naranja"),
+    (280, "Violeta"),
+    (350, "Rojo"),
+    (180, "Turquesa"),
+    (55, "Amarillo"),
+    (250, "Índigo"),
+];
+
 /// Tono (HSL) de una feature según su posición: las contiguas nunca se repiten.
 pub fn feature_hue(index: usize) -> u16 {
-    const HUES: [u16; 8] = [210, 140, 30, 280, 350, 180, 55, 250];
-    HUES[index % HUES.len()]
+    FEATURE_HUES[index % FEATURE_HUES.len()].0
+}
+
+pub fn is_feature_hue(hue: u16) -> bool {
+    FEATURE_HUES.iter().any(|(h, _)| *h == hue)
+}
+
+/// Colores elegidos a mano (`id=tono` por línea). Ignora líneas inválidas y tonos
+/// fuera de la paleta.
+pub fn parse_feature_colors(text: &str) -> HashMap<u64, u16> {
+    text.lines()
+        .filter_map(|l| {
+            let (id, hue) = l.split_once('=')?;
+            let hue = hue.trim().parse().ok().filter(|h| is_feature_hue(*h))?;
+            Some((id.trim().parse().ok()?, hue))
+        })
+        .collect()
+}
+
+pub fn serialize_feature_colors(colors: &HashMap<u64, u16>) -> String {
+    let mut lines: Vec<_> = colors.iter().map(|(id, h)| format!("{id}={h}\n")).collect();
+    lines.sort();
+    lines.concat()
 }
 
 pub fn file_mark(statuses: &[FileStatusDto], path: &str) -> Option<FileStateDto> {
@@ -293,6 +329,18 @@ mod tests {
         assert_eq!(rename_selection("v1.2", false), 4);
         assert_ne!(feature_hue(0), feature_hue(1));
         assert_eq!(feature_hue(0), feature_hue(8));
+    }
+
+    #[test]
+    fn feature_colors_round_trip_and_stay_in_the_palette() {
+        let colors = HashMap::from([(3, 140), (12, 350)]);
+        assert_eq!(
+            parse_feature_colors(&serialize_feature_colors(&colors)),
+            colors
+        );
+        // Tono fuera de la paleta, id inválido y basura: se ignoran.
+        let parsed = parse_feature_colors("1=999\nx=140\nbasura\n 7 = 55 \n");
+        assert_eq!(parsed, HashMap::from([(7, 55)]));
     }
 
     #[test]

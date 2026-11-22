@@ -92,8 +92,21 @@ fn candidate(base: &Path) -> Option<PathBuf> {
         let mut p = base.as_os_str().to_owned();
         p.push(&ext);
         let p = PathBuf::from(p);
-        p.is_file().then_some(p)
+        is_executable(&p).then_some(p)
     })
+}
+
+/// En Unix (macOS, Linux) un archivo sin permiso de ejecución no sirve: se sigue
+/// buscando en el resto del `PATH`, como hace el shell.
+#[cfg(unix)]
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(not(unix))]
+fn is_executable(path: &Path) -> bool {
+    path.is_file()
 }
 
 fn find(program: &str, path_override: Option<&str>) -> Option<PathBuf> {
@@ -124,12 +137,37 @@ mod tests {
             "herramienta"
         };
         std::fs::write(dir.path().join(name), "").unwrap();
+        make_executable(&dir.path().join(name));
         let path = dir.path().to_string_lossy().into_owned();
         let (found, args) = resolve_program("herramienta", Some(&path)).unwrap();
         assert_eq!(found, dir.path().join(name));
         assert!(args.is_empty());
         assert!(resolve_program("no-existe", Some(&path)).is_none());
         assert!(resolve_program("", Some(&path)).is_none());
+    }
+
+    #[cfg(unix)]
+    fn make_executable(path: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[cfg(not(unix))]
+    fn make_executable(_: &Path) {}
+
+    /// Un archivo sin bit de ejecución antes en el `PATH` no tapa al ejecutable.
+    #[cfg(unix)]
+    #[test]
+    fn non_executable_files_are_skipped() {
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+        std::fs::write(first.path().join("claude"), "").unwrap();
+        std::fs::write(second.path().join("claude"), "#!/bin/sh").unwrap();
+        make_executable(&second.path().join("claude"));
+        let path = std::env::join_paths([first.path(), second.path()]).unwrap();
+        let (found, _) = resolve_program("claude", path.to_str()).unwrap();
+        assert_eq!(found, second.path().join("claude"));
+        assert!(resolve_program("claude", first.path().to_str()).is_none());
     }
 
     #[cfg(windows)]

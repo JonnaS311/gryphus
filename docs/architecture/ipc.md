@@ -38,7 +38,8 @@ Los tipos viven en **`gryphus-ipc`** (solo `serde`) y los compilan tanto `src-ta
 | `pick_folder` | — | `Option<String>` (diálogo nativo) |
 | `open_project` | `OpenProjectReq { path }` | `OpenProjectRes { other_window }` |
 | `get_project` | — | `Option<ProjectDto>` (`None` = pantalla de bienvenida) |
-| `close_project` | — | — (detiene los agentes, guarda y deja la ventana en la bienvenida; idempotente) |
+| `close_project` | — | — (detiene los agentes, guarda y deja la ventana en la bienvenida; idempotente; olvida el último proyecto) |
+| `restore_last_project` | — | `bool` (al arrancar reabre en `main` el último proyecto abierto, guardado en `<data_dir>/last_project.txt`; una vez por proceso) |
 | `create_feature` | `CreateFeatureReq { name, worktree: New{base} \| Existing{id} }` | id de la feature |
 | `delete_feature` | `DeleteFeatureReq { feature, remove_worktrees, force }` | — |
 | `spawn_agent` | `SpawnAgentReq { feature, worktree, provider }` | id del agente |
@@ -82,6 +83,7 @@ Se emiten con `emit_to(etiqueta)`, **solo a la ventana del proyecto**. Son notif
 |---|---|---|
 | `feature:changed` / `feature:removed` | `FeatureEvent { feature }` | refrescar el proyecto |
 | `agent:status` | `AgentStatusEvent { agent, status }` | actualizar el indicador |
+| `agent:idle` | `AgentEvent { agent }` | avisar en su feature que terminó y espera instrucciones |
 | `fs:changed` | `FilesChangedEvent { worktree, paths }` | refrescar el explorador y el archivo abierto |
 | `git:changed` | `WorktreeEvent { worktree }` | volver a pedir status/diff si está visible |
 | `worktrees:changed` | `()` | refrescar el proyecto |

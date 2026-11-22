@@ -19,6 +19,9 @@ pub mod cmd {
     pub const GET_PROJECT: &str = "get_project";
     /// Cierra el proyecto de la ventana (detiene sus agentes y guarda); la ventana vuelve a la bienvenida.
     pub const CLOSE_PROJECT: &str = "close_project";
+    /// Al arrancar, reabre en la ventana principal el último proyecto abierto.
+    /// Devuelve `true` si lo abrió; solo actúa una vez por proceso.
+    pub const RESTORE_LAST_PROJECT: &str = "restore_last_project";
     pub const CREATE_FEATURE: &str = "create_feature";
     pub const DELETE_FEATURE: &str = "delete_feature";
     pub const SPAWN_AGENT: &str = "spawn_agent";
@@ -61,6 +64,8 @@ pub mod event {
     pub const FEATURE_REMOVED: &str = "feature:removed";
     /// Payload: [`super::AgentStatusEvent`]
     pub const AGENT_STATUS: &str = "agent:status";
+    /// El agente terminó su tarea y espera instrucciones. Payload: [super::AgentEvent]
+    pub const AGENT_IDLE: &str = "agent:idle";
     /// Payload: [`super::FilesChangedEvent`]
     pub const FILES_CHANGED: &str = "fs:changed";
     /// Payload: [`super::WorktreeEvent`]
@@ -385,6 +390,11 @@ pub struct AgentStatusEvent {
     pub status: AgentStatusDto,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentEvent {
+    pub agent: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FilesChangedEvent {
     pub worktree: u64,
@@ -426,6 +436,7 @@ mod tests {
             cmd::OPEN_PROJECT,
             cmd::GET_PROJECT,
             cmd::CLOSE_PROJECT,
+            cmd::RESTORE_LAST_PROJECT,
             cmd::CREATE_FEATURE,
             cmd::DELETE_FEATURE,
             cmd::SPAWN_AGENT,

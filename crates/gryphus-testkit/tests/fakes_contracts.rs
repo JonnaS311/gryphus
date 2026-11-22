@@ -46,6 +46,9 @@ mod git {
         fn create_branch(&self, name: &str) {
             self.0.create_branch(name);
         }
+        fn delete_worktree_dir(&self, worktree: &Path) {
+            self.0.delete_worktree_dir(worktree);
+        }
     }
 
     gryphus_testkit::git_contract!(Harness::new);

@@ -44,6 +44,9 @@ impl GitHarness for Harness {
     fn create_branch(&self, name: &str) {
         self.repo.create_branch(name);
     }
+    fn delete_worktree_dir(&self, worktree: &Path) {
+        std::fs::remove_dir_all(worktree).unwrap();
+    }
 }
 
 gryphus_testkit::git_contract!(Harness::new);

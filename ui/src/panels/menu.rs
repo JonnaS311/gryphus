@@ -10,6 +10,8 @@ use crate::store::{Clipboard, MenuTarget, RenameTarget, Store};
 const MENU_WIDTH: i32 = 230;
 const ITEM_HEIGHT: i32 = 28;
 const SEPARATOR_HEIGHT: i32 = 9;
+/// Fila de muestras de color (`.menu-swatches` en style.css).
+const SWATCHES_HEIGHT: i32 = 34;
 
 struct MenuItem {
     /// Identificador estable (`data-action`); por omisión, el texto.
@@ -92,6 +94,11 @@ fn items(store: Store, target: MenuTarget) -> Vec<MenuItem> {
         MenuTarget::Agent(id) => vec![MenuItem::new("Renombrar", move || {
             store.renaming.set(Some(RenameTarget::Agent(id)))
         })],
+        // Las muestras de color las pinta `ColorSwatches`; aquí solo volver al automático.
+        MenuTarget::Feature(id) => vec![MenuItem::new("Color automático", move || {
+            store.set_feature_color(id, None)
+        })
+        .enabled(store.feature_colors.with_untracked(|c| c.contains_key(&id)))],
         MenuTarget::Entry {
             worktree,
             path,
@@ -156,10 +163,22 @@ pub fn ContextMenuHost() -> impl IntoView {
 
     move || {
         store.menu.get().map(|menu| {
+            let feature = match menu.target {
+                MenuTarget::Feature(id) => Some(id),
+                _ => None,
+            };
             let items = items(store, menu.target);
             let (width, height) = crate::bridge::prefs::viewport();
             let separators = items.iter().filter(|i| i.separator).count() as i32;
-            let menu_height = items.len() as i32 * ITEM_HEIGHT + separators * SEPARATOR_HEIGHT + 10;
+            let swatches_height = if feature.is_some() {
+                SWATCHES_HEIGHT
+            } else {
+                0
+            };
+            let menu_height = items.len() as i32 * ITEM_HEIGHT
+                + separators * SEPARATOR_HEIGHT
+                + swatches_height
+                + 10;
             let x = menu.x.min(width - MENU_WIDTH - 4).max(0);
             let y = menu.y.min(height - menu_height - 4).max(0);
             view! {
@@ -170,6 +189,7 @@ pub fn ContextMenuHost() -> impl IntoView {
                     style:top=format!("{y}px")
                     on:contextmenu=|ev| ev.prevent_default()
                 >
+                    {feature.map(|id| view! { <ColorSwatches feature=id/> })}
                     {items
                         .into_iter()
                         .map(|item| {
@@ -196,6 +216,49 @@ pub fn ContextMenuHost() -> impl IntoView {
                 </ul>
             }
         })
+    }
+}
+
+/// Selector limitado a la paleta de las features (`logic::FEATURE_HUES`); marca el
+/// color que tiene ahora, elegido o automático.
+#[component]
+fn ColorSwatches(feature: u64) -> impl IntoView {
+    let store = expect_context::<Store>();
+    let current = store
+        .feature_colors
+        .with_untracked(|c| c.get(&feature).copied());
+    let automatic = store.project.with_untracked(|p| {
+        p.as_ref()
+            .and_then(|p| p.features.iter().position(|f| f.id == feature))
+            .map(logic::feature_hue)
+    });
+    let shown = current.or(automatic);
+    view! {
+        <li class="menu-swatches" role="group" aria-label="Color de la feature">
+            {logic::FEATURE_HUES
+                .iter()
+                .map(|&(hue, name)| {
+                    let selected = shown == Some(hue);
+                    view! {
+                        <button
+                            class="swatch"
+                            class:selected=selected
+                            role="menuitemradio"
+                            aria-checked=selected.to_string()
+                            aria-label=name
+                            title=name
+                            data-hue=hue.to_string()
+                            style=format!("--feature-hue: {hue}")
+                            on:click=move |ev| {
+                                ev.stop_propagation();
+                                store.menu.set(None);
+                                store.set_feature_color(feature, Some(hue));
+                            }
+                        ></button>
+                    }
+                })
+                .collect_view()}
+        </li>
     }
 }
 

@@ -1,7 +1,9 @@
-//! Barra de estado: branch del worktree activo, ahead/behind, cambios y agentes.
+//! Barra de estado: branch del worktree activo, ahead/behind, cambios y agentes,
+//! y botones para cambiar de lado los paneles laterales.
 
 use leptos::prelude::*;
 
+use crate::layout::{Pane, Side};
 use crate::logic;
 use crate::store::Store;
 
@@ -50,6 +52,35 @@ pub fn StatusBar() -> impl IntoView {
             <span>{move || format!("{} agentes activos", running())}</span>
             <span class="spacer"></span>
             <span class="muted ellipsis">{root}</span>
+            <DockToggle pane=Pane::Features/>
+            <DockToggle pane=Pane::Explorer/>
         </footer>
+    }
+}
+
+/// Mueve un panel lateral al otro lado. Ambos pueden quedar del mismo lado.
+#[component]
+fn DockToggle(pane: Pane) -> impl IntoView {
+    let store = expect_context::<Store>();
+    let side = move || store.panes.with(|p| p.get(pane).side);
+    let label = pane.label();
+    view! {
+        <button
+            id=match pane {
+                Pane::Features => "dock-features",
+                Pane::Explorer => "dock-explorer",
+            }
+            class="dock-toggle"
+            title=move || match side() {
+                Side::Left => format!("Mover {label} a la derecha"),
+                Side::Right => format!("Mover {label} a la izquierda"),
+            }
+            on:click=move |_| store.toggle_pane_side(pane)
+        >
+            {move || match side() {
+                Side::Left => format!("◧ {label}"),
+                Side::Right => format!("{label} ◨"),
+            }}
+        </button>
     }
 }

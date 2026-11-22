@@ -161,8 +161,9 @@ async fn state_persists_across_restarts() {
     first.wait_terminal("fake-agent ready").await;
     first.quit().await;
 
+    // Al arrancar se reabre solo el último proyecto (sin pasar por la bienvenida).
     let second = App::start(&fx).await;
-    second.open_project(&fx.root()).await;
+    second.wait_css(".shell").await;
     second.wait_css(feature).await;
     second.wait_text(".agent .agent-status", "detenido").await;
     second.screenshot("06-reabierto").await;

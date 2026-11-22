@@ -199,9 +199,13 @@ fn delete_feature(store: Store, id: u64) {
 fn FeatureItem(feature: FeatureDto) -> impl IntoView {
     let store = expect_context::<Store>();
     let id = feature.id;
-    // Según su posición en la lista: cada feature tiene un color distinto al de sus vecinas.
-    // Reactivo porque `<For>` conserva el componente al cambiar el orden.
+    // El elegido en el menú contextual o, si no hay, según su posición en la lista
+    // (cada feature con un color distinto al de sus vecinas). Reactivo porque
+    // `<For>` conserva el componente al cambiar el orden.
     let hue = move || {
+        if let Some(h) = store.feature_colors.with(|c| c.get(&id).copied()) {
+            return h;
+        }
         store.project.with(|p| {
             let index = p
                 .as_ref()
@@ -230,19 +234,32 @@ fn FeatureItem(feature: FeatureDto) -> impl IntoView {
         })
     };
     let worktrees = feature.worktrees.clone();
+    // Un agente de la feature terminó su tarea y espera instrucciones.
+    let pending = move || store.pending_agent_of(id);
+    let review = move |ev: leptos::ev::MouseEvent| {
+        ev.stop_propagation();
+        if let Some((agent, worktree)) = store.pending_agent_of(id) {
+            if store.is_collapsed(id) {
+                store.toggle_collapsed(id);
+            }
+            store.select_agent(agent, worktree, id);
+        }
+    };
 
     view! {
         <section
             class="feature"
             class:selected=move || store.selected_feature.get() == Some(id)
+            class:attention=move || pending().is_some()
             class:collapsed=collapsed
             style=move || format!("--feature-hue: {}", hue())
             data-feature=feature.name.clone()
         >
             <header
                 class="feature-header"
-                title="Clic para expandir o contraer"
+                title="Clic para expandir o contraer · clic derecho para cambiar el color"
                 aria-expanded=move || (!collapsed()).to_string()
+                on:contextmenu=move |ev| store.open_menu(&ev, MenuTarget::Feature(id))
                 on:click=move |_| {
                     store.selected_feature.set(Some(id));
                     store.toggle_collapsed(id);
@@ -252,6 +269,14 @@ fn FeatureItem(feature: FeatureDto) -> impl IntoView {
                 <span class="feature-name">{feature.name.clone()}</span>
                 <Show when=show_count>
                     <span class="feature-count" title="Agentes">{agent_count}</span>
+                </Show>
+                <Show when=move || pending().is_some()>
+                    <button
+                        class="attention-dot"
+                        title="El agente terminó y espera instrucciones: clic para revisarlo"
+                        aria-label="Revisar agente que terminó"
+                        on:click=review
+                    ></button>
                 </Show>
                 <button
                     class="icon danger"
@@ -366,6 +391,7 @@ fn AgentRow(agent: AgentDto) -> impl IntoView {
         <li
             class="agent"
             class:selected=move || store.selected_agent.get() == Some(id)
+            class:attention=move || store.attention.with(|set| set.contains(&id))
             data-agent=id.to_string()
             title="Clic derecho para renombrar"
             on:click=move |_| store.select_agent(id, worktree, feature)

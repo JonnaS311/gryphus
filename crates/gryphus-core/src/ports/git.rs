@@ -106,8 +106,12 @@ pub trait GitPort: Send + Sync {
     fn repo_info(&self, root: &Path) -> PortResult<RepoInfo>;
     /// Locales y remotas, con ahead/behind respecto a su upstream.
     fn list_branches(&self, root: &Path) -> PortResult<Vec<Branch>>;
-    /// Incluye el worktree principal.
+    /// Incluye el worktree principal. Omite los registrados cuyo directorio ya no
+    /// existe (borrados a mano): git los marca como `prunable`.
     fn list_worktrees(&self, root: &Path) -> PortResult<Vec<WorktreeInfo>>;
+    /// `git worktree prune`: olvida los registros de worktrees cuyo directorio ya
+    /// no existe, liberando sus branches para usarlas en otro worktree.
+    fn prune_worktrees(&self, root: &Path) -> PortResult<()>;
     fn add_worktree(&self, root: &Path, req: &NewWorktree) -> PortResult<WorktreeInfo>;
     /// `force` permite borrar con cambios sin commit. Nunca borra la branch.
     fn remove_worktree(&self, root: &Path, worktree: &Path, force: bool) -> PortResult<()>;

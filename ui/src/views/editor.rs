@@ -1,6 +1,7 @@
 //! Editor con pestañas (CodeMirror). Cada archivo abierto es una pestaña con su propio
 //! documento (cursor e historial de deshacer). Ctrl+S guarda, Ctrl+W cierra la pestaña
 //! (pregunta si hay cambios sin guardar) y Ctrl+Tab / Ctrl+Shift+Tab cambian de pestaña.
+//! En macOS son ⌘S y ⌘W; Ctrl+Tab no cambia.
 //! Si un archivo abierto cambia en disco y no tiene cambios sin guardar, se recarga.
 
 use std::collections::HashMap;
@@ -310,19 +311,20 @@ pub fn CodeEditor() -> impl IntoView {
     });
 
     let _keys = window_event_listener(leptos::ev::keydown, move |ev| {
-        if !ev.ctrl_key()
-            || store.view.get_untracked() != CenterView::Editor
+        if store.view.get_untracked() != CenterView::Editor
             || store.confirm.with_untracked(Option::is_some)
         {
             return;
         }
+        // Cerrar usa el modificador principal (⌘W en macOS); cambiar de pestaña
+        // es Ctrl+Tab en todas partes (⌘Tab es del sistema en macOS).
         match ev.key().as_str() {
-            "w" | "W" => {
+            "w" | "W" if crate::bridge::dom::primary_mod(&ev) => {
                 if let Some(file) = store.open_file.get_untracked() {
                     close(file);
                 }
             }
-            "Tab" => cycle(if ev.shift_key() { -1 } else { 1 }),
+            "Tab" if ev.ctrl_key() => cycle(if ev.shift_key() { -1 } else { 1 }),
             _ => return,
         }
         ev.prevent_default();
@@ -370,7 +372,7 @@ pub fn CodeEditor() -> impl IntoView {
                 disabled=move || store.open_file.with(Option::is_none) || notice().is_some()
                 on:click=save_click
             >
-                "Guardar (Ctrl+S)"
+                {if crate::bridge::dom::is_mac() { "Guardar (⌘S)" } else { "Guardar (Ctrl+S)" }}
             </button>
         </div>
         <Show when=move || notice().is_some()>
@@ -476,7 +478,12 @@ where
             <button
                 class="editor-tab-close"
                 title=move || {
-                    if is_dirty.get() { "Cambios sin guardar — cerrar (Ctrl+W)" } else { "Cerrar (Ctrl+W)" }
+                    match (is_dirty.get(), crate::bridge::dom::is_mac()) {
+                        (true, true) => "Cambios sin guardar — cerrar (⌘W)",
+                        (true, false) => "Cambios sin guardar — cerrar (Ctrl+W)",
+                        (false, true) => "Cerrar (⌘W)",
+                        (false, false) => "Cerrar (Ctrl+W)",
+                    }
                 }
                 aria-label="Cerrar"
                 on:click=close_click

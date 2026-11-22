@@ -1,8 +1,37 @@
-//! Utilidades del DOM que Leptos no cubre (desplazamiento a un elemento,
-//! portapapeles del sistema y sistema operativo).
+//! Utilidades del DOM que Leptos no cubre (desplazamiento a un elemento, foco,
+//! portapapeles del sistema, plataforma y modificador principal de los atajos).
+
+use std::sync::OnceLock;
 
 use js_sys::{Function, Promise, Reflect};
 use wasm_bindgen::{JsCast, JsValue};
+
+/// `true` en macOS (WKWebView). Allí los atajos usan ⌘ en vez de Ctrl.
+pub fn is_mac() -> bool {
+    static MAC: OnceLock<bool> = OnceLock::new();
+    *MAC.get_or_init(|| {
+        web_sys::window()
+            .and_then(|w| w.navigator().user_agent().ok())
+            .is_some_and(|ua| ua.contains("Macintosh") || ua.contains("Mac OS X"))
+    })
+}
+
+/// Modificador principal pulsado: ⌘ en macOS, Ctrl en el resto.
+pub fn primary_mod(ev: &web_sys::KeyboardEvent) -> bool {
+    if is_mac() {
+        ev.meta_key()
+    } else {
+        ev.ctrl_key()
+    }
+}
+
+/// `true` si la ventana tiene el foco (el usuario la está mirando).
+pub fn has_focus() -> bool {
+    web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.has_focus().ok())
+        .unwrap_or(true)
+}
 
 /// Sistema operativo donde corre la app (para los textos de la UI).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -13,13 +42,14 @@ pub enum Os {
 }
 
 pub fn os() -> Os {
-    let agent = web_sys::window()
+    if is_mac() {
+        return Os::Mac;
+    }
+    let windows = web_sys::window()
         .and_then(|w| w.navigator().user_agent().ok())
-        .unwrap_or_default();
-    if agent.contains("Windows") {
+        .is_some_and(|ua| ua.contains("Windows"));
+    if windows {
         Os::Windows
-    } else if agent.contains("Mac") {
-        Os::Mac
     } else {
         Os::Linux
     }
