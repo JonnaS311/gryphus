@@ -54,6 +54,9 @@ pub struct AppState {
     pub git: Arc<CliGit>,
     pub fs: Arc<LocalFs>,
     pub store: Arc<JsonStore>,
+    /// Portapapeles del sistema, creado al primer uso. Se conserva vivo porque en X11
+    /// el contenido copiado se pierde al soltar el último `Clipboard`.
+    clipboard: Mutex<Option<arboard::Clipboard>>,
     pub last_project: LastProject,
 }
 
@@ -110,7 +113,21 @@ impl AppState {
             git: Arc::new(CliGit::new()),
             fs: Arc::new(LocalFs::new()),
             store: Arc::new(JsonStore::new(data_dir, config_file)),
+            clipboard: Mutex::new(None),
         }
+    }
+
+    /// Ejecuta `f` con el portapapeles del sistema (lo abre si hace falta).
+    pub fn with_clipboard<T>(
+        &self,
+        f: impl FnOnce(&mut arboard::Clipboard) -> Result<T, arboard::Error>,
+    ) -> Result<T, arboard::Error> {
+        let mut slot = lock(&self.clipboard);
+        if slot.is_none() {
+            *slot = Some(arboard::Clipboard::new()?);
+        }
+        let clipboard = slot.as_mut().expect("recién creado");
+        f(clipboard)
     }
 
     /// Cada sesión tiene su propio runtime de agentes: los ids de agente son

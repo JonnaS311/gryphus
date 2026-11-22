@@ -5,7 +5,7 @@ use leptos::prelude::*;
 
 use crate::bridge::dom;
 use crate::logic;
-use crate::store::{Clipboard, MenuTarget, RenameTarget, Store};
+use crate::store::{MenuTarget, RenameTarget, Store};
 
 const MENU_WIDTH: i32 = 230;
 const ITEM_HEIGHT: i32 = 28;
@@ -89,7 +89,6 @@ fn path_items(store: Store, worktree: u64, path: String) -> Vec<MenuItem> {
 }
 
 fn items(store: Store, target: MenuTarget) -> Vec<MenuItem> {
-    let has_clip = store.clipboard.with_untracked(Option::is_some);
     match target {
         MenuTarget::Agent(id) => vec![MenuItem::new("Renombrar", move || {
             store.renaming.set(Some(RenameTarget::Agent(id)))
@@ -118,23 +117,18 @@ fn items(store: Store, target: MenuTarget) -> Vec<MenuItem> {
                     }))
                 }),
                 MenuItem::new("Copiar", move || {
-                    store.clipboard.set(Some(Clipboard {
-                        worktree,
-                        path: copy_path.clone(),
-                    }))
+                    store.copy_entry(worktree, copy_path.clone())
                 }),
-                MenuItem::new("Pegar", move || store.paste(worktree, paste_dir.clone()))
-                    .enabled(has_clip),
+                MenuItem::new("Pegar", move || store.paste(worktree, paste_dir.clone())),
             ];
             items.extend(path_items(store, worktree, path));
             items
         }
+        // "Pegar" siempre activo: puede haber archivos en el portapapeles del sistema.
         MenuTarget::ExplorerRoot { worktree } => {
-            let mut items =
-                vec![
-                    MenuItem::new("Pegar", move || store.paste(worktree, String::new()))
-                        .enabled(has_clip),
-                ];
+            let mut items = vec![MenuItem::new("Pegar", move || {
+                store.paste(worktree, String::new())
+            })];
             items.extend(path_items(store, worktree, String::new()));
             items
         }

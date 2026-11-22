@@ -275,6 +275,46 @@ impl App {
         self.wait_css(".context-menu").await;
     }
 
+    /// Simula arrastrar archivos del sistema sobre el centro del primer elemento que
+    /// cumple `css`. WebDriver no puede arrastrar desde fuera de la ventana: se emite
+    /// el mismo evento que Tauri genera (`tauri://drag-over` o `tauri://drag-drop`,
+    /// rutas absolutas y posición en píxeles físicos).
+    pub async fn drag_files(&self, event: &str, css: &str, paths: &[PathBuf]) {
+        self.wait_css(css).await;
+        let paths: Vec<String> = paths
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        self.script(
+            "const r = document.querySelector(arguments[1]).getBoundingClientRect();
+             const k = window.devicePixelRatio;
+             const position = { x: (r.left + r.width / 2) * k, y: (r.top + r.height / 2) * k };
+             return window.__TAURI__.event.emit(arguments[0], { paths: arguments[2], position });",
+            vec![json!(event), json!(css), json!(paths)],
+        )
+        .await;
+    }
+
+    /// Suelta archivos del sistema sobre `css` (ver [`Self::drag_files`]).
+    pub async fn drop_files(&self, css: &str, paths: &[PathBuf]) {
+        self.drag_files("tauri://drag-drop", css, paths).await;
+    }
+
+    /// Dispara `paste` en el campo de entrada de la terminal, con `text` como
+    /// contenido del portapapeles (o sin texto, como al copiar archivos).
+    pub async fn paste_in_terminal(&self, text: Option<&str>) {
+        self.script(
+            "const dt = new DataTransfer();
+             if (arguments[0] !== null) dt.setData('text/plain', arguments[0]);
+             const target = document.querySelector('.terminal textarea');
+             target.focus();
+             target.dispatchEvent(new ClipboardEvent('paste', {
+                 clipboardData: dt, bubbles: true, cancelable: true }));",
+            vec![json!(text)],
+        )
+        .await;
+    }
+
     /// Elige `value` en un `<select>` como lo haría el usuario (dispara `change`).
     pub async fn select_value(&self, css: &str, value: &str) {
         self.wait_css(css).await;

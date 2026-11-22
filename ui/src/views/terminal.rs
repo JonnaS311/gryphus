@@ -8,7 +8,7 @@ use leptos::task::spawn_local;
 use crate::bridge::xterm::Terminal;
 use crate::ipc;
 use crate::logic;
-use crate::store::Store;
+use crate::store::{FileDrop, Store};
 
 #[component]
 pub fn AgentTerminal() -> impl IntoView {
@@ -42,6 +42,7 @@ pub fn AgentTerminal() -> impl IntoView {
                         });
                     }
                 },
+                move || store.paste_non_text_into_agent(),
             )
             .await;
             match created {
@@ -86,6 +87,26 @@ pub fn AgentTerminal() -> impl IntoView {
         });
     });
 
+    // Rutas soltadas o pegadas desde el portapapeles del sistema (ver `dnd` y `Store`).
+    Effect::new(move |_| {
+        let Some(text) = store.terminal_paste.get() else {
+            return;
+        };
+        if !ready.get() {
+            return; // se pega cuando la terminal exista
+        }
+        store.terminal_paste.set(None);
+        if store.selected_agent.get_untracked().is_none() {
+            return;
+        }
+        term.with_value(|t| {
+            if let Some(t) = t {
+                t.paste(&text);
+                t.focus();
+            }
+        });
+    });
+
     on_cleanup(move || {
         term.update_value(|t| {
             if let Some(t) = t.take() {
@@ -119,6 +140,12 @@ pub fn AgentTerminal() -> impl IntoView {
                     })
             }}
         </div>
-        <div class="terminal" node_ref=el></div>
+        <div
+            class="terminal"
+            class:drop-target=move || {
+                store.drop_target.with(|t| matches!(t, Some(FileDrop::Terminal)))
+            }
+            node_ref=el
+        ></div>
     }
 }

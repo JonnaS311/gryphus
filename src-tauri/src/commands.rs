@@ -536,6 +536,63 @@ pub async fn reveal_path(
     .await
 }
 
+#[tauri::command]
+pub async fn import_paths(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    req: ImportPathsReq,
+) -> CmdResult<Vec<String>> {
+    with_session(&state, &window, move |s| {
+        let sources: Vec<PathBuf> = req.sources.iter().map(PathBuf::from).collect();
+        s.import_paths(WorktreeId::from_raw(req.worktree), &sources, &req.to_dir)
+            .map(|v| v.into_iter().map(String::from).collect())
+            .map_err(dto::error)
+    })
+    .await
+}
+
+// ── Portapapeles del sistema ─────────────────────────────────────────────────
+
+/// Archivos copiados en el sistema (p. ej. Ctrl+C en el explorador de Windows).
+/// Sin archivos, o sin portapapeles disponible, devuelve una lista vacía.
+#[tauri::command]
+pub async fn clipboard_files(app: AppHandle) -> CmdResult<Vec<String>> {
+    blocking(move || {
+        let files = app
+            .state::<AppState>()
+            .with_clipboard(|c| c.get().file_list())
+            .unwrap_or_default();
+        Ok(files
+            .into_iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect())
+    })
+    .await
+}
+
+/// Pone un archivo o carpeta del worktree en el portapapeles del sistema, para
+/// pegarlo en la terminal de un agente, en el explorador o fuera de Gryphus.
+#[tauri::command]
+pub async fn clipboard_copy_path(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    req: PathReq,
+) -> CmdResult<()> {
+    let app = window.app_handle().clone();
+    with_session(&state, &window, move |s| {
+        let path = s
+            .absolute_path(WorktreeId::from_raw(req.worktree), &req.path)
+            .map_err(dto::error)?;
+        app.state::<AppState>()
+            .with_clipboard(|c| c.set().file_list(&[path]))
+            .map_err(|e| IpcError {
+                code: "CLIPBOARD".into(),
+                message: format!("no se pudo usar el portapapeles del sistema: {e}"),
+            })
+    })
+    .await
+}
+
 // ── Git ──────────────────────────────────────────────────────────────────────
 
 #[tauri::command]

@@ -716,6 +716,37 @@ fn rename_and_paste_files() {
 }
 
 #[test]
+fn importing_requires_absolute_paths() {
+    let w = World::new();
+    let s = w.open();
+    let main = main_wt(&s);
+    let rel = [std::path::PathBuf::from("a.txt")];
+    assert_eq!(code(s.import_paths(main, &rel, "")), "INVALID_PATH");
+    assert_eq!(code(s.import_paths(main, &[], "../x")), "INVALID_PATH");
+    assert!(s.import_paths(main, &[], "").unwrap().is_empty());
+}
+
+/// Las rutas de `FakeFs` (`/repo/…`) solo son absolutas fuera de Windows.
+#[cfg(unix)]
+#[test]
+fn importing_uses_copy_names() {
+    let w = World::new();
+    let s = w.open();
+    let main = main_wt(&s);
+    s.write_file(main, "a.txt", b"a").unwrap();
+    s.write_file(main, "src/b.rs", b"b").unwrap();
+    let sources = [
+        std::path::PathBuf::from(ROOT).join("a.txt"),
+        std::path::PathBuf::from(ROOT).join("a.txt"),
+    ];
+    let created = s.import_paths(main, &sources, "").unwrap();
+    let created: Vec<_> = created.iter().map(|p| p.as_str()).collect();
+    assert_eq!(created, ["a copia.txt", "a copia 2.txt"]);
+    let into_src = s.import_paths(main, &sources[..1], "src").unwrap();
+    assert_eq!(into_src[0].as_str(), "src/a.txt");
+}
+
+#[test]
 fn agents_are_named_and_renamed() {
     let w = World::new();
     let s = w.open();
