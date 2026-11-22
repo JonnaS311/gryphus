@@ -7,7 +7,7 @@ publish.workspace = true
 
 [dev-dependencies]
 gryphus-testkit = { workspace = true }
-fantoccini = "0.21"
+fantoccini = "0.22"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "time", "net"] }
 serde_json = { workspace = true }
 arboard = { workspace = true }
