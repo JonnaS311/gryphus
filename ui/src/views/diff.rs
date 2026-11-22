@@ -30,9 +30,11 @@ pub fn DiffView() -> impl IntoView {
     // Solo se aplica la respuesta de la petición más reciente: si no, un diff lento
     // de otro worktree (o de la otra base) podía quedarse en pantalla.
     let req = StoredValue::new(0u64);
+    // Memo: reorganizar las columnas sin mostrar u ocultar el diff no lo recarga.
+    let shown = Memo::new(move |_| store.center.with(|c| c.is_visible(CenterView::Diff)));
     Effect::new(move |_| {
         store.git_tick.track();
-        let visible = store.view.get() == CenterView::Diff;
+        let visible = shown.get();
         let worktree = store.active_worktree.get();
         let base = if from_main.get() { main_branch() } else { None };
         let (true, Some(worktree)) = (visible, worktree) else {
@@ -168,7 +170,7 @@ fn DiffFile(file: FileDiffDto) -> impl IntoView {
                 worktree,
                 path: path.clone(),
             }));
-            store.view.set(CenterView::Editor);
+            store.show_view(CenterView::Editor);
         }
     };
 

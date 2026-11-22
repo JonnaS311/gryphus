@@ -199,9 +199,13 @@ fn delete_feature(store: Store, id: u64) {
 fn FeatureItem(feature: FeatureDto) -> impl IntoView {
     let store = expect_context::<Store>();
     let id = feature.id;
-    // Según su posición en la lista: cada feature tiene un color distinto al de sus vecinas.
-    // Reactivo porque `<For>` conserva el componente al cambiar el orden.
+    // El elegido en el menú contextual o, si no hay, según su posición en la lista
+    // (cada feature con un color distinto al de sus vecinas). Reactivo porque
+    // `<For>` conserva el componente al cambiar el orden.
     let hue = move || {
+        if let Some(h) = store.feature_colors.with(|c| c.get(&id).copied()) {
+            return h;
+        }
         store.project.with(|p| {
             let index = p
                 .as_ref()
@@ -241,8 +245,9 @@ fn FeatureItem(feature: FeatureDto) -> impl IntoView {
         >
             <header
                 class="feature-header"
-                title="Clic para expandir o contraer"
+                title="Clic para expandir o contraer · clic derecho para cambiar el color"
                 aria-expanded=move || (!collapsed()).to_string()
+                on:contextmenu=move |ev| store.open_menu(&ev, MenuTarget::Feature(id))
                 on:click=move |_| {
                     store.selected_feature.set(Some(id));
                     store.toggle_collapsed(id);

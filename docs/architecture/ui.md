@@ -38,12 +38,18 @@ Reglas (verificadas por `tools/arch-guard`):
 | Zona | Componente | Datos |
 |---|---|---|
 | Izquierda | `AgentsPanel` → `FeatureItem` → `WorktreeRow`, `AgentRow`, `NewAgent`; `NewFeatureForm` | `get_project`; eventos `feature:*`, `agent:status`, `worktrees:changed` |
-| Centro | `MainView` con pestañas `AgentTerminal`, `CodeEditor`, `DiffView` (las tres montadas; se ocultan con CSS) | `attach_agent`, `read_file`/`write_file`, `git_diff` |
+| Centro | `MainView` con pestañas `AgentTerminal`, `CodeEditor`, `DiffView` repartidas en columnas (las tres montadas; se colocan con CSS grid y se ocultan con CSS) | `attach_agent`, `read_file`/`write_file`, `git_diff` |
 | Derecha | `Explorer` → `TreeDir`/`TreeEntry` recursivos y perezosos | `list_dir`, `git_status`, `fs:changed` |
 | Abajo | `StatusBar` (branch, ↑↓, cambios, agentes activos, ruta) | `git_overview`, `git_status` |
 | Sin proyecto | `Welcome` (diálogo nativo o ruta escrita) | `pick_folder`, `open_project` |
 
 **Worktree activo:** el del agente seleccionado o el que se elija en el panel izquierdo. El explorador, el diff y la barra de estado lo siguen.
+
+**Paneles acoplables:** Features y Explorador se redimensionan arrastrando su divisor (doble clic lo devuelve al ancho por defecto) y se cambian de lado con los botones de la barra de estado; ambos pueden quedar del mismo lado. El ancho se limita a 180–640 px y siempre deja al menos 320 px a la vista central. Lado y ancho (`layout::Panes`, lógica pura con pruebas) se guardan en `localStorage` (`gryphus.panes`). Se reordenan con `order` de flexbox, así que moverlos no los remonta. Las clases `.pane-left`/`.pane-right` identifican el panel, no su lado.
+
+**Columnas centrales:** arrastrar una pestaña (Agente, Editor o Diff) muestra zonas de soltar sobre cada columna: el borde izquierdo o derecho la abre en una columna nueva a ese lado, y la barra superior o el centro la juntan como pestaña de esa columna. Así se vuelve al estado inicial. Las columnas vacías desaparecen (máximo tres). El reparto (`layout::CenterLayout`, lógica pura con pruebas) se guarda en `localStorage` (`gryphus.center`). `store.view` es la vista **con foco** (la última elegida o tocada) y se cambia con `Store::show_view`; para saber si una vista se ve se usa `center.is_visible`. Cada vista se coloca con `grid-column`, así que moverla no la remonta: la terminal y el editor conservan su estado.
+
+**Color de las features:** por defecto sale de su posición (`logic::feature_hue`). Clic derecho en la cabecera abre un selector limitado a esa misma paleta (`logic::FEATURE_HUES`) y "Color automático" para volver al de la posición. Es preferencia de la UI: se guarda en `localStorage` por proyecto (`gryphus.feature-colors.<id del proyecto>`), sin tocar el backend.
 
 ## Flujo de datos
 
@@ -65,7 +71,7 @@ Reglas (verificadas por `tools/arch-guard`):
 
 | Atajo | Acción |
 |---|---|
-| `Ctrl+1/2/3` | Pestaña Agente / Editor / Diff |
+| `Ctrl+1/2/3` | Pestaña Agente / Editor / Diff (la muestra en su columna y le da el foco) |
 | `Ctrl+S` | Guardar (en el editor) |
 
 ## Pegamento JS (`ui/js`)

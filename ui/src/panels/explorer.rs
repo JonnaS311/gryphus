@@ -231,7 +231,7 @@ fn TreeEntry(worktree: u64, entry: DirEntryDto, parent: String, depth: usize) ->
                                         path: open_path.clone(),
                                     }),
                                 );
-                            store.view.set(CenterView::Editor);
+                            store.show_view(CenterView::Editor);
                         }
                     >
                         <span class="chev"></span>

@@ -4,9 +4,10 @@ use gryphus_ipc::{event, AgentStatusEvent, FeatureEvent, FilesChangedEvent, Work
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 
+use crate::bridge::prefs::viewport;
 use crate::bridge::tauri::listen;
 use crate::ipc;
-use crate::layout::CenterView;
+use crate::layout::{CenterView, Pane, Panes, Side};
 use crate::panels::{AgentsPanel, ContextMenuHost, Explorer, Navbar, StatusBar};
 use crate::store::Store;
 use crate::views::{MainView, Welcome};
@@ -68,7 +69,7 @@ pub fn App() -> impl IntoView {
             _ => return,
         };
         ev.prevent_default();
-        store.view.set(view);
+        store.show_view(view);
     });
 
     view! {
@@ -164,13 +165,104 @@ fn Workspace() -> impl IntoView {
         });
     });
 
+    // Redimensionar paneles: el divisor inicia el arrastre y la ventana lo sigue
+    // (el puntero puede pasar por encima de xterm o CodeMirror mientras tanto).
+    let drag = RwSignal::new(None::<Drag>);
+    let finish = move || {
+        if drag.try_get_untracked().flatten().is_some() {
+            drag.set(None);
+            store.save_panes();
+        }
+    };
+    let on_move = window_event_listener(leptos::ev::pointermove, move |ev| {
+        let Some(d) = drag.try_get_untracked().flatten() else {
+            return;
+        };
+        // Se soltó el botón fuera de la ventana: no llegó `pointerup`.
+        if ev.buttons() & 1 == 0 {
+            finish();
+            return;
+        }
+        let dx = ev.client_x() - d.start_x;
+        let width = match store.panes.with_untracked(|p| p.get(d.pane).side) {
+            Side::Left => d.start_width + dx,
+            Side::Right => d.start_width - dx,
+        };
+        let viewport = viewport().0;
+        store.panes.update(|p| p.set_width(d.pane, width, viewport));
+    });
+    let on_up = window_event_listener(leptos::ev::pointerup, move |_| finish());
+    let on_cancel = window_event_listener(leptos::ev::pointercancel, move |_| finish());
+    on_cleanup(move || {
+        on_move.remove();
+        on_up.remove();
+        on_cancel.remove();
+    });
+
     view! {
-        <div class="shell">
-            <AgentsPanel/>
-            <MainView/>
-            <Explorer/>
+        <div class="shell" class:resizing=move || drag.with(Option::is_some)>
+            <div class="docks">
+                <DockedPane pane=Pane::Features drag>
+                    <AgentsPanel/>
+                </DockedPane>
+                <MainView/>
+                <DockedPane pane=Pane::Explorer drag>
+                    <Explorer/>
+                </DockedPane>
+            </div>
             <StatusBar/>
         </div>
+    }
+}
+
+/// Arrastre en curso de un divisor.
+#[derive(Debug, Clone, Copy)]
+struct Drag {
+    pane: Pane,
+    start_x: i32,
+    start_width: i32,
+}
+
+/// Panel lateral acoplado a su lado (`order` de flexbox, sin remontarlo al moverlo)
+/// con su divisor hacia la vista central.
+#[component]
+fn DockedPane(pane: Pane, drag: RwSignal<Option<Drag>>, children: Children) -> impl IntoView {
+    let store = expect_context::<Store>();
+    let order = move || store.panes.with(|p| p.order(pane));
+    let width = move || store.panes.with(|p| p.get(pane).width);
+    view! {
+        <div
+            class="dock"
+            style:order=move || order().0.to_string()
+            style:width=move || format!("{}px", width())
+        >
+            {children()}
+        </div>
+        <div
+            class="dock-handle"
+            class:active=move || drag.with(|d| d.is_some_and(|d| d.pane == pane))
+            style:order=move || order().1.to_string()
+            role="separator"
+            aria-orientation="vertical"
+            aria-label=format!("Redimensionar {}", pane.label())
+            title="Arrastra para redimensionar · doble clic: ancho por defecto"
+            on:pointerdown=move |ev| {
+                if ev.button() != 0 {
+                    return;
+                }
+                ev.prevent_default();
+                drag.set(Some(Drag {
+                    pane,
+                    start_x: ev.client_x(),
+                    start_width: store.panes.with_untracked(|p| p.get(pane).width),
+                }));
+            }
+            on:dblclick=move |_| {
+                let viewport = viewport().0;
+                store.panes.update(|p| p.set_width(pane, Panes::default_width(pane), viewport));
+                store.save_panes();
+            }
+        ></div>
     }
 }
 
