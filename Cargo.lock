@@ -89,7 +89,7 @@ dependencies = [
 
 [[package]]
 name = "arch-guard"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde_json",
 ]
@@ -1289,7 +1289,7 @@ dependencies = [
 
 [[package]]
 name = "fake-agent"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "gryphus-testkit",
  "tempfile",
@@ -1813,7 +1813,7 @@ dependencies = [
 
 [[package]]
 name = "gryphus-agents"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "gryphus-core",
  "gryphus-testkit",
@@ -1823,7 +1823,7 @@ dependencies = [
 
 [[package]]
 name = "gryphus-app"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "gryphus-core",
  "gryphus-testkit",
@@ -1832,7 +1832,7 @@ dependencies = [
 
 [[package]]
 name = "gryphus-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "proptest",
  "serde",
@@ -1842,7 +1842,7 @@ dependencies = [
 
 [[package]]
 name = "gryphus-desktop"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arboard",
  "gryphus-agents",
@@ -1861,7 +1861,7 @@ dependencies = [
 
 [[package]]
 name = "gryphus-e2e"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arboard",
  "fantoccini",
@@ -1872,7 +1872,7 @@ dependencies = [
 
 [[package]]
 name = "gryphus-fs"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "gryphus-core",
  "gryphus-testkit",
@@ -1883,7 +1883,7 @@ dependencies = [
 
 [[package]]
 name = "gryphus-git"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "criterion",
  "gryphus-core",
@@ -1892,7 +1892,7 @@ dependencies = [
 
 [[package]]
 name = "gryphus-ipc"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1900,7 +1900,7 @@ dependencies = [
 
 [[package]]
 name = "gryphus-store"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "gryphus-core",
  "gryphus-testkit",
@@ -1912,7 +1912,7 @@ dependencies = [
 
 [[package]]
 name = "gryphus-testkit"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "gryphus-core",
  "serde_json",
@@ -1921,7 +1921,7 @@ dependencies = [
 
 [[package]]
 name = "gryphus-ui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "console_error_panic_hook",
  "futures-channel",
