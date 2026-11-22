@@ -109,7 +109,7 @@ Los 9 flujos se cubren con 3 pruebas en `e2e/tests/flows.rs`: `open_project_once
 
 Las e2e ya detectaron un fallo real: el explorador colapsaba las carpetas abiertas con cada cambio en disco.
 
-> En macOS no hay driver de WKWebView. En CI los e2e están configurados para Windows y Linux (ver `.github/workflows/ci.yml`), aunque esos jobs aún no se han ejecutado.
+> En macOS no hay driver de WKWebView. Los e2e están **desactivados temporalmente en CI**: fallaban en los runners de Windows (no se abre la sesión WebDriver) y Linux (WebKitGTK); seguimiento en [#6](https://github.com/JonnaS311/gryphus/issues/6). Se ejecutan en local con `GRYPHUS_E2E=1`.
 
 ## Guardias de arquitectura
 

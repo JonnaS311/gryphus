@@ -46,7 +46,7 @@ Los instaladores están en [Releases](https://github.com/JonnaS311/gryphus/relea
 | Git | CLI de `git` ([ADR-005](docs/decisions.md)) |
 | Archivos | [notify](https://crates.io/crates/notify) (watcher) e [ignore](https://crates.io/crates/ignore) (`.gitignore`) |
 | Pruebas | `cargo test`, [proptest](https://crates.io/crates/proptest), [criterion](https://crates.io/crates/criterion) y E2E con WebDriver ([fantoccini](https://crates.io/crates/fantoccini) + `tauri-driver`) |
-| CI/CD | GitHub Actions: fmt, clippy y pruebas en Windows, macOS y Linux (E2E informativo en Windows y Linux); instaladores con [tauri-action](https://github.com/tauri-apps/tauri-action) |
+| CI/CD | GitHub Actions: fmt, clippy y pruebas en Windows, macOS y Linux (E2E desactivado temporalmente en CI, ver [#6](https://github.com/JonnaS311/gryphus/issues/6)); instaladores con [tauri-action](https://github.com/tauri-apps/tauri-action) |
 
 Arquitectura hexagonal: el dominio (`gryphus-core`) define puertos (traits) y los adaptadores (git, fs, agentes, store) los implementan. `arch-guard` verifica en las pruebas la regla de dependencias entre crates. Detalle en [docs/architecture/overview.md](docs/architecture/overview.md).
 
