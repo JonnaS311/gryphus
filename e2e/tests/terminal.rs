@@ -163,7 +163,11 @@ async fn terminal_has_no_black_border() {
             vec![],
         )
         .await;
-    assert_eq!(black, serde_json::json!([]), "elementos negros en la terminal");
+    assert_eq!(
+        black,
+        serde_json::json!([]),
+        "elementos negros en la terminal"
+    );
     app.quit().await;
 }
 
