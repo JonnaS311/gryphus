@@ -476,6 +476,28 @@ pub async fn copy_path(
     .await
 }
 
+/// Muestra el archivo o carpeta en el gestor de archivos del sistema.
+#[tauri::command]
+pub async fn reveal_path(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    req: PathReq,
+) -> CmdResult<()> {
+    with_session(&state, &window, move |s| {
+        let path = s
+            .absolute_path(WorktreeId::from_raw(req.worktree), &req.path)
+            .map_err(dto::error)?;
+        if std::fs::symlink_metadata(&path).is_err() {
+            return Err(IpcError {
+                code: "NOT_FOUND".into(),
+                message: format!("{} no existe", path.display()),
+            });
+        }
+        crate::reveal::reveal(&path, !req.path.is_empty()).map_err(internal)
+    })
+    .await
+}
+
 // ── Git ──────────────────────────────────────────────────────────────────────
 
 #[tauri::command]

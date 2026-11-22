@@ -147,6 +147,11 @@ pub async fn copy_path(
     .await
 }
 
+/// Muestra la ruta en el gestor de archivos del sistema (`""` abre la raíz).
+pub async fn reveal_path(worktree: u64, path: String) -> IpcResult<()> {
+    invoke(cmd::REVEAL_PATH, Some(&PathReq { worktree, path })).await
+}
+
 pub async fn git_status(worktree: u64) -> IpcResult<Vec<FileStatusDto>> {
     invoke(cmd::GIT_STATUS, Some(&WorktreeReq { worktree })).await
 }

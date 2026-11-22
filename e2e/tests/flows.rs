@@ -287,6 +287,152 @@ async fn initial_agent_from_settings() {
     app.quit().await;
 }
 
+/// Explorador: copiar la ruta absoluta y la relativa al portapapeles del sistema,
+/// y "Mostrar en el Explorador/Finder". Abrir de verdad el gestor de archivos no se
+/// automatiza (dejaría ventanas abiertas): se comprueban el menú y la validación.
+#[tokio::test(flavor = "multi_thread")]
+async fn explorer_copy_paths_and_reveal() {
+    e2e!();
+    let _serial = SERIAL.lock().await;
+    let fx = Fixture::new();
+    let docs = fx.repo.root().join("docs");
+    std::fs::create_dir_all(&docs).unwrap();
+    std::fs::write(docs.join("guía rápida.md"), "x\n").unwrap();
+    let app = App::start(&fx).await;
+    app.open_project(&fx.root()).await;
+    app.record_clipboard().await;
+
+    app.click(r#".tree-row[data-path="docs"]"#).await;
+    let file = r#".tree-row[data-path="docs/guía rápida.md"]"#;
+    app.wait_css(file).await;
+
+    // Ruta absoluta: con el separador del sistema y apuntando al archivo.
+    app.right_click(file).await;
+    app.click(r#".context-menu [data-action="Copiar ruta"]"#)
+        .await;
+    let absolute = app.wait_copied().await;
+    if cfg!(windows) {
+        assert!(!absolute.contains('/'), "separador de Windows: {absolute}");
+    }
+    assert_eq!(
+        std::fs::canonicalize(&absolute).unwrap(),
+        std::fs::canonicalize(docs.join("guía rápida.md")).unwrap(),
+        "{absolute}"
+    );
+    if cfg!(windows) {
+        // Llegó al portapapeles del sistema, no solo a la API del navegador.
+        let out = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                "[Console]::OutputEncoding = [Text.Encoding]::UTF8; Get-Clipboard",
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), absolute);
+    }
+
+    // Ruta relativa al worktree.
+    app.right_click(file).await;
+    app.click(r#".context-menu [data-action="Copiar ruta relativa"]"#)
+        .await;
+    let relative = if cfg!(windows) {
+        r"docs\guía rápida.md"
+    } else {
+        "docs/guía rápida.md"
+    };
+    assert_eq!(app.wait_copied().await, relative);
+
+    // Zona vacía: la raíz del worktree (sin "ruta relativa").
+    app.right_click(".pane-right .pane-header").await;
+    assert!(
+        !app.exists(r#".context-menu [data-action="Copiar ruta relativa"]"#)
+            .await
+    );
+    app.click(r#".context-menu [data-action="Copiar ruta"]"#)
+        .await;
+    let root = app.wait_copied().await;
+    assert_eq!(
+        std::fs::canonicalize(&root).unwrap(),
+        std::fs::canonicalize(fx.repo.root()).unwrap(),
+        "{root}"
+    );
+    assert!(!app.exists(".toast").await, "copiar no dio error");
+
+    // "Mostrar en…" con el nombre del gestor de archivos de cada sistema.
+    app.right_click(file).await;
+    let label = if cfg!(windows) {
+        "Mostrar en el Explorador"
+    } else if cfg!(target_os = "macos") {
+        "Mostrar en Finder"
+    } else {
+        "Abrir carpeta contenedora"
+    };
+    app.wait_text(r#".context-menu [data-action="reveal"]"#, label)
+        .await;
+    app.screenshot("11-explorador-menu-rutas").await;
+    app.type_active(ESCAPE).await;
+    app.wait_gone(".context-menu").await;
+
+    // El backend no muestra nada fuera del worktree ni rutas inexistentes.
+    let project = app.invoke("get_project", json!(null)).await;
+    let worktree = project["worktrees"][0]["id"].clone();
+    let outside = app
+        .invoke_result(
+            "reveal_path",
+            json!({ "worktree": worktree, "path": "../fuera" }),
+        )
+        .await;
+    assert!(outside.is_err(), "{outside:?}");
+    let missing = app
+        .invoke_result(
+            "reveal_path",
+            json!({ "worktree": worktree, "path": "no-existe.md" }),
+        )
+        .await;
+    assert_eq!(missing.unwrap_err()["code"], json!("NOT_FOUND"));
+
+    // Abrir el Explorador de verdad solo a petición (GRYPHUS_E2E_REVEAL=1, Windows):
+    // se comprueba la ventana con el archivo seleccionado y se cierra.
+    if cfg!(windows) && std::env::var("GRYPHUS_E2E_REVEAL").is_ok_and(|v| v == "1") {
+        let target = std::fs::canonicalize(docs.join("guía rápida.md")).unwrap();
+        let target = target
+            .to_string_lossy()
+            .trim_start_matches(r"\\?\")
+            .to_owned();
+        app.right_click(file).await;
+        app.click(r#".context-menu [data-action="reveal"]"#).await;
+        wait_for("ventana del Explorador con el archivo seleccionado", || {
+            let target = target.clone();
+            async move { explorer_selection(&target, false) }
+        })
+        .await;
+        explorer_selection(&target, true);
+        assert!(!app.exists(".toast").await, "mostrar no dio error");
+    }
+
+    app.quit().await;
+}
+
+/// ¿Hay una ventana del Explorador con `path` seleccionado? Con `close`, la cierra.
+fn explorer_selection(path: &str, close: bool) -> bool {
+    let script = format!(
+        "[Console]::OutputEncoding = [Text.Encoding]::UTF8
+         $found = $false
+         foreach ($w in (New-Object -ComObject Shell.Application).Windows()) {{
+           try {{ $items = @($w.Document.SelectedItems() | ForEach-Object {{ $_.Path }}) }} catch {{ continue }}
+           if ($items -contains '{}') {{ $found = $true; if (${close}) {{ $w.Quit() }} }}
+         }}
+         $found",
+        path.replace('\'', "''")
+    );
+    let out = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", &script])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).trim() == "True"
+}
+
 /// Explorador: colores distintos por feature, Escape cancela, renombrar una carpeta
 /// mantiene abierto su archivo y pegar dentro de una carpeta.
 #[tokio::test(flavor = "multi_thread")]

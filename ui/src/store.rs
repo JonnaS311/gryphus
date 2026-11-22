@@ -9,7 +9,7 @@ use gryphus_ipc::{FileStatusDto, GitOverviewDto, IpcError, ProjectDto};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 
-use crate::bridge::prefs;
+use crate::bridge::{dom, prefs};
 use crate::ipc;
 use crate::layout::CenterView;
 use crate::logic;
@@ -264,6 +264,37 @@ impl Store {
                     self.bump_git();
                 }
                 Err(e) => self.report(e),
+            }
+        });
+    }
+
+    /// Copia al portapapeles del sistema la ruta de `path` (relativa al worktree;
+    /// `""` es la raíz): absoluta, o relativa al worktree si `relative`.
+    pub fn copy_path_text(self, worktree: u64, path: String, relative: bool) {
+        let windows = dom::os() == dom::Os::Windows;
+        let text = if relative {
+            logic::native_path(&path, windows)
+        } else {
+            let root = self.project.with_untracked(|p| {
+                p.as_ref()
+                    .and_then(|p| logic::worktree(p, worktree))
+                    .map(|w| w.path.clone())
+            });
+            let Some(root) = root else { return };
+            logic::absolute_path(&root, &path, windows)
+        };
+        spawn_local(async move {
+            if let Err(message) = dom::copy_text(&text).await {
+                self.error.set(Some(message));
+            }
+        });
+    }
+
+    /// Muestra `path` en el gestor de archivos del sistema (`""` abre la raíz).
+    pub fn reveal_in_os(self, worktree: u64, path: String) {
+        spawn_local(async move {
+            if let Err(e) = ipc::reveal_path(worktree, path).await {
+                self.report(e);
             }
         });
     }

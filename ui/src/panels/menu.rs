@@ -3,26 +3,95 @@
 
 use leptos::prelude::*;
 
+use crate::bridge::dom;
 use crate::logic;
 use crate::store::{Clipboard, MenuTarget, RenameTarget, Store};
 
-const MENU_WIDTH: i32 = 200;
+const MENU_WIDTH: i32 = 230;
 const ITEM_HEIGHT: i32 = 28;
+const SEPARATOR_HEIGHT: i32 = 9;
 
 struct MenuItem {
+    /// Identificador estable (`data-action`); por omisión, el texto.
+    id: &'static str,
     label: &'static str,
     enabled: bool,
+    /// Línea divisoria antes del elemento (agrupa acciones).
+    separator: bool,
     action: Box<dyn Fn()>,
+}
+
+impl MenuItem {
+    fn new(label: &'static str, action: impl Fn() + 'static) -> Self {
+        Self {
+            id: label,
+            label,
+            enabled: true,
+            separator: false,
+            action: Box::new(action),
+        }
+    }
+
+    /// Para textos que cambian (según el sistema operativo).
+    fn id(mut self, id: &'static str) -> Self {
+        self.id = id;
+        self
+    }
+
+    fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
+    fn after_separator(mut self) -> Self {
+        self.separator = true;
+        self
+    }
+}
+
+/// Texto de "mostrar en el gestor de archivos", con el nombre del de cada sistema.
+fn reveal_label() -> &'static str {
+    match dom::os() {
+        dom::Os::Windows => "Mostrar en el Explorador",
+        dom::Os::Mac => "Mostrar en Finder",
+        dom::Os::Linux => "Abrir carpeta contenedora",
+    }
+}
+
+/// Copiar ruta, copiar ruta relativa y mostrar en el gestor de archivos.
+fn path_items(store: Store, worktree: u64, path: String) -> Vec<MenuItem> {
+    let (abs, rel) = (path.clone(), path.clone());
+    let reveal = if path.is_empty() {
+        match dom::os() {
+            dom::Os::Mac => "Abrir en Finder",
+            _ => "Abrir en el gestor de archivos",
+        }
+    } else {
+        reveal_label()
+    };
+    let mut items = vec![
+        MenuItem::new(reveal, move || store.reveal_in_os(worktree, path.clone()))
+            .id("reveal")
+            .after_separator(),
+        MenuItem::new("Copiar ruta", move || {
+            store.copy_path_text(worktree, abs.clone(), false)
+        })
+        .after_separator(),
+    ];
+    if !rel.is_empty() {
+        items.push(MenuItem::new("Copiar ruta relativa", move || {
+            store.copy_path_text(worktree, rel.clone(), true)
+        }));
+    }
+    items
 }
 
 fn items(store: Store, target: MenuTarget) -> Vec<MenuItem> {
     let has_clip = store.clipboard.with_untracked(Option::is_some);
     match target {
-        MenuTarget::Agent(id) => vec![MenuItem {
-            label: "Renombrar",
-            enabled: true,
-            action: Box::new(move || store.renaming.set(Some(RenameTarget::Agent(id)))),
-        }],
+        MenuTarget::Agent(id) => vec![MenuItem::new("Renombrar", move || {
+            store.renaming.set(Some(RenameTarget::Agent(id)))
+        })],
         MenuTarget::Entry {
             worktree,
             path,
@@ -33,40 +102,35 @@ fn items(store: Store, target: MenuTarget) -> Vec<MenuItem> {
             } else {
                 logic::parent_dir(&path).to_owned()
             };
-            let (rename_path, copy_path) = (path.clone(), path);
-            vec![
-                MenuItem {
-                    label: "Renombrar",
-                    enabled: true,
-                    action: Box::new(move || {
-                        store.renaming.set(Some(RenameTarget::Entry {
-                            worktree,
-                            path: rename_path.clone(),
-                        }))
-                    }),
-                },
-                MenuItem {
-                    label: "Copiar",
-                    enabled: true,
-                    action: Box::new(move || {
-                        store.clipboard.set(Some(Clipboard {
-                            worktree,
-                            path: copy_path.clone(),
-                        }))
-                    }),
-                },
-                MenuItem {
-                    label: "Pegar",
-                    enabled: has_clip,
-                    action: Box::new(move || store.paste(worktree, paste_dir.clone())),
-                },
-            ]
+            let (rename_path, copy_path) = (path.clone(), path.clone());
+            let mut items = vec![
+                MenuItem::new("Renombrar", move || {
+                    store.renaming.set(Some(RenameTarget::Entry {
+                        worktree,
+                        path: rename_path.clone(),
+                    }))
+                }),
+                MenuItem::new("Copiar", move || {
+                    store.clipboard.set(Some(Clipboard {
+                        worktree,
+                        path: copy_path.clone(),
+                    }))
+                }),
+                MenuItem::new("Pegar", move || store.paste(worktree, paste_dir.clone()))
+                    .enabled(has_clip),
+            ];
+            items.extend(path_items(store, worktree, path));
+            items
         }
-        MenuTarget::ExplorerRoot { worktree } => vec![MenuItem {
-            label: "Pegar",
-            enabled: has_clip,
-            action: Box::new(move || store.paste(worktree, String::new())),
-        }],
+        MenuTarget::ExplorerRoot { worktree } => {
+            let mut items =
+                vec![
+                    MenuItem::new("Pegar", move || store.paste(worktree, String::new()))
+                        .enabled(has_clip),
+                ];
+            items.extend(path_items(store, worktree, String::new()));
+            items
+        }
     }
 }
 
@@ -94,7 +158,8 @@ pub fn ContextMenuHost() -> impl IntoView {
         store.menu.get().map(|menu| {
             let items = items(store, menu.target);
             let (width, height) = crate::bridge::prefs::viewport();
-            let menu_height = items.len() as i32 * ITEM_HEIGHT + 10;
+            let separators = items.iter().filter(|i| i.separator).count() as i32;
+            let menu_height = items.len() as i32 * ITEM_HEIGHT + separators * SEPARATOR_HEIGHT + 10;
             let x = menu.x.min(width - MENU_WIDTH - 4).max(0);
             let y = menu.y.min(height - menu_height - 4).max(0);
             view! {
@@ -108,12 +173,13 @@ pub fn ContextMenuHost() -> impl IntoView {
                     {items
                         .into_iter()
                         .map(|item| {
-                            let MenuItem { label, enabled, action } = item;
+                            let MenuItem { id, label, enabled, separator, action } = item;
                             view! {
+                                {separator.then(|| view! { <li class="separator" role="separator"></li> })}
                                 <li>
                                     <button
                                         role="menuitem"
-                                        data-action=label
+                                        data-action=id
                                         disabled=!enabled
                                         on:click=move |ev| {
                                             ev.stop_propagation();

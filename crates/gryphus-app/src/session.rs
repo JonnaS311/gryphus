@@ -410,6 +410,13 @@ impl ProjectSession {
         Ok(target)
     }
 
+    /// Ruta absoluta de `path` (relativa al worktree), validada; `""` es la raíz.
+    /// No comprueba que exista.
+    pub fn absolute_path(&self, worktree: WorktreeId, path: &str) -> AppResult<PathBuf> {
+        let root = self.inner.worktree_path(worktree)?;
+        Ok(RelPath::parse(path)?.to_path(&root))
+    }
+
     // ── Git ──────────────────────────────────────────────────────────────────
 
     pub fn git_status(&self, worktree: WorktreeId) -> AppResult<Vec<FileStatus>> {

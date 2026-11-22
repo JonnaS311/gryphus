@@ -4,6 +4,7 @@
 pub mod commands;
 pub mod dto;
 pub mod events;
+mod reveal;
 pub mod startup;
 pub mod state;
 
@@ -94,6 +95,7 @@ pub fn run() {
             commands::write_file,
             commands::rename_path,
             commands::copy_path,
+            commands::reveal_path,
             commands::git_status,
             commands::git_diff,
             commands::git_overview,

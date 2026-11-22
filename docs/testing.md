@@ -84,6 +84,8 @@ $env:GRYPHUS_E2E = "1"; cargo test -p gryphus-e2e -- --nocapture
 
 Sin `GRYPHUS_E2E=1` se omiten, así `cargo test --workspace` sigue siendo rápido.
 
+`explorer_copy_paths_and_reveal` no abre el gestor de archivos por defecto (dejaría ventanas abiertas). Con `GRYPHUS_E2E_REVEAL=1` (solo Windows) pulsa "Mostrar en el Explorador", comprueba vía `Shell.Application` que la ventana tiene el archivo seleccionado y la cierra.
+
 ### Flujos obligatorios
 
 Corren contra el binario real con config que apunta los tres proveedores a `fake-agent`:
