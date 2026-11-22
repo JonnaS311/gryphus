@@ -87,7 +87,7 @@ Dentro de Rust, los adaptadores **no** llaman a la UI. Publican `DomainEvent`s e
 
 | Grupo | Operaciones |
 |---|---|
-| Ciclo de vida | `open(path, ports)` (carga o crea el proyecto, `reset_after_restart`, sincroniza worktrees, empieza a vigilar), `close()` (mata agentes activos y guarda) |
+| Ciclo de vida | `open(path, ports)` (carga o crea el proyecto, `reset_after_restart`, sincroniza worktrees, empieza a vigilar, relanza los agentes que seguían activos retomando su conversación), `close()` (marca los agentes activos para reabrirlos, mata sus procesos y guarda) |
 | Features | `create_feature(name, New{base} \| Existing(wt))`, `delete_feature(f, remove_worktrees, force)`, `attach_worktree`, `detach_worktree` |
 | Agentes | `spawn_agent`, `stop_agent`, `restart_agent`, `remove_agent`, `agent_input`, `agent_resize`, `attach_agent` |
 | Archivos | `list_dir`, `read_file`, `write_file` (rutas relativas al worktree, validadas como `RelPath`) |

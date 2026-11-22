@@ -154,7 +154,7 @@ fn feature_agent_files_and_git_end_to_end() {
 }
 
 #[test]
-fn agents_survive_as_exited_after_reopening() {
+fn agents_are_relaunched_after_reopening() {
     let env = Env::new();
     let session = env.open();
     let feature = session
@@ -162,17 +162,39 @@ fn agents_survive_as_exited_after_reopening() {
         .unwrap();
     let wt = session.project().feature(feature).unwrap().worktrees()[0];
     let agent = session.spawn_agent(feature, wt, ProviderId::Codex).unwrap();
+    let stopped = session
+        .spawn_agent(feature, wt, ProviderId::Claude)
+        .unwrap();
+    session.stop_agent(stopped).unwrap();
+    assert!(wait_until(T, || {
+        session
+            .project()
+            .agent(stopped)
+            .is_ok_and(|a| !a.status().is_active())
+    }));
     session.close().unwrap();
     drop(session);
 
+    // El que seguía activo al cerrar se relanza solo; el detenido sigue detenido.
     let reopened = env.open();
-    assert_eq!(
-        reopened.project().agent(agent).unwrap().status(),
-        &AgentStatus::Exited { code: None }
-    );
-    reopened.restart_agent(agent).unwrap();
     let sink = Arc::new(CollectingChunkSink::default());
     let _sub = reopened.attach_agent(agent, sink.clone()).unwrap();
+    assert!(wait_until(T, || sink.output().contains("fake-agent ready")));
+    assert_eq!(
+        reopened.project().agent(agent).unwrap().status(),
+        &AgentStatus::Running
+    );
+    assert!(!reopened
+        .project()
+        .agent(stopped)
+        .unwrap()
+        .status()
+        .is_active());
+
+    // Y el detenido se puede relanzar a mano.
+    reopened.restart_agent(stopped).unwrap();
+    let sink = Arc::new(CollectingChunkSink::default());
+    let _sub = reopened.attach_agent(stopped, sink.clone()).unwrap();
     assert!(wait_until(T, || sink.output().contains("fake-agent ready")));
     reopened.close().unwrap();
 }

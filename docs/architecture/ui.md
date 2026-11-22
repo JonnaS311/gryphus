@@ -57,6 +57,7 @@ Reglas (verificadas por `tools/arch-guard`):
 - **Salida de agentes sin pasar por WASM:** `Terminal::channel()` crea un `Channel` de Tauri en JS cuyo `onmessage` decodifica el formato binario y escribe directo en xterm. La entrada (`onData`) y el tamaño (`onResize`) sí pasan por Rust → `agent_input` / `agent_resize`.
 - **Una terminal por ventana:** al cambiar de agente se reinicia y se vuelve a conectar; el backend reenvía el scrollback.
 - **Editor:** Ctrl+S guarda (escritura atómica en Rust). Un indicador ● marca cambios sin guardar. Cargar otro archivo reinicia el historial de deshacer.
+- **Arrastrar desde el explorador:** una fila arrastrada (más de 6 px) se puede soltar en la terminal del agente (escribe su ruta: relativa si el agente trabaja en ese worktree, absoluta si no), en el editor (abre el archivo; las carpetas no) o en otra carpeta del árbol (la mueve con `move_path`; nunca sobrescribe, y no se puede soltar en su propia carpeta ni dentro de sí misma). Una etiqueta sigue al puntero con lo que pasará al soltar; Esc cancela. Va con eventos del puntero (`panels/explorer.rs`, destino en `dnd::entry_target`), no con HTML5 drag & drop: con el soltar de archivos de Tauri activo, WebView2 no entrega los `drop` internos. Mover un archivo con cambios sin guardar se bloquea, como al renombrar.
 - **Explorador:** carga un nivel por expansión. El estado expandido vive en el `store`, así que sobrevive a las recargas causadas por cambios en disco (este fallo lo detectaron las pruebas e2e). Un listado solo se reemplaza si cambió.
 
 ## Eficiencia
@@ -65,7 +66,7 @@ Reglas (verificadas por `tools/arch-guard`):
 - Los bytes de salida van del backend a xterm sin copias en WASM ni JSON.
 - Árbol perezoso y listas que solo se repintan si cambian.
 - WASM de release con `opt-level = "z"`, LTO y `wasm-opt`.
-- El pegamento JS (1,1 MB: xterm + CodeMirror) **no está en el camino crítico del arranque**. `bridge/glue.rs` lo inyecta bajo demanda y `App` lo precarga en segundo plano tras montar la UI; `Terminal::create` y `Editor::create` esperan a que esté listo.
+- El pegamento JS (1,7 MB: xterm + CodeMirror con ~40 lenguajes; el mapa nombre → lenguaje está en `ui/js/src/languages.js`) **no está en el camino crítico del arranque**. `bridge/glue.rs` lo inyecta bajo demanda y `App` lo precarga en segundo plano tras montar la UI; `Terminal::create` y `Editor::create` esperan a que esté listo.
 
 ## Atajos
 

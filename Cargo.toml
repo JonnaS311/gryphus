@@ -36,6 +36,8 @@ tauri-build = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 # Portapapeles del sistema con listas de archivos (copiar/pegar con el explorador del SO).
 arboard = { version = "3.7", default-features = false }
+# Eliminar desde el explorador manda a la papelera del sistema (recuperable).
+trash = "5"
 leptos = { version = "0.8", features = ["csr"] }
 console_error_panic_hook = "0.1"
 

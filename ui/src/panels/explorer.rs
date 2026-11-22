@@ -10,11 +10,130 @@ use crate::ipc;
 use crate::layout::CenterView;
 use crate::logic;
 use crate::panels::InlineRename;
-use crate::store::{FileDrop, MenuTarget, OpenFile, RenameTarget, Store};
+use crate::store::{EntryDrag, FileDrop, MenuTarget, OpenFile, RenameTarget, Store};
+
+/// Píxeles que hay que mover el puntero para que un clic en una fila pase a arrastre.
+const DRAG_THRESHOLD: i32 = 6;
+
+/// Arrastre de filas del explorador hacia la terminal, el editor u otra carpeta.
+/// Va con eventos del puntero y no con HTML5 drag & drop: con el soltar de archivos
+/// de Tauri activo, WebView2 no entrega los `drop` internos.
+#[derive(Clone, Copy)]
+struct RowDrag {
+    /// Fila pulsada y dónde, mientras no se suelte el botón.
+    press: StoredValue<Option<(EntryDrag, i32, i32)>>,
+    /// Posición del puntero (para la etiqueta que lo sigue).
+    pos: RwSignal<(i32, i32)>,
+    /// El último `pointerup` terminó un arrastre: el `click` que le sigue no cuenta.
+    swallow_click: StoredValue<bool>,
+}
+
+impl RowDrag {
+    fn start(&self, ev: &leptos::ev::PointerEvent, drag: EntryDrag) {
+        self.swallow_click.set_value(false);
+        if ev.button() == 0 {
+            self.press
+                .set_value(Some((drag, ev.client_x(), ev.client_y())));
+        }
+    }
+
+    /// `true` si el clic viene de soltar un arrastre (y lo consume).
+    fn take_click(&self) -> bool {
+        let swallow = self.swallow_click.get_value();
+        self.swallow_click.set_value(false);
+        swallow
+    }
+}
 
 #[component]
 pub fn Explorer() -> impl IntoView {
     let store = expect_context::<Store>();
+    let row_drag = RowDrag {
+        press: StoredValue::new(None),
+        pos: RwSignal::new((0, 0)),
+        swallow_click: StoredValue::new(false),
+    };
+    provide_context(row_drag);
+    let reset = move || {
+        row_drag.press.set_value(None);
+        if store.entry_drag.get_untracked().is_some() {
+            store.entry_drag.set(None);
+            crate::dnd::set_target(store, None);
+        }
+    };
+    let on_move = window_event_listener(leptos::ev::pointermove, move |ev| {
+        let Some((drag, x, y)) = row_drag.press.try_get_value().flatten() else {
+            return;
+        };
+        // Se soltó el botón fuera de la ventana: no llegó `pointerup`.
+        if ev.buttons() & 1 == 0 {
+            reset();
+            return;
+        }
+        let (cx, cy) = (ev.client_x(), ev.client_y());
+        if store.entry_drag.get_untracked().is_none() {
+            if (cx - x).abs() <= DRAG_THRESHOLD && (cy - y).abs() <= DRAG_THRESHOLD {
+                return;
+            }
+            store.menu.set(None);
+            store.entry_drag.set(Some(drag.clone()));
+        }
+        row_drag.pos.set((cx, cy));
+        let target = crate::dnd::entry_target(store, &drag, f64::from(cx), f64::from(cy));
+        crate::dnd::set_target(store, target);
+    });
+    let on_up = window_event_listener(leptos::ev::pointerup, move |_| {
+        if row_drag.press.try_get_value().flatten().is_none() {
+            return;
+        }
+        if let Some(drag) = store.entry_drag.get_untracked() {
+            row_drag.swallow_click.set_value(true);
+            if let Some(target) = store.drop_target.get_untracked() {
+                store.drop_entry(drag, target);
+            }
+        }
+        reset();
+    });
+    let on_cancel = window_event_listener(leptos::ev::pointercancel, move |_| {
+        if row_drag.press.try_get_value().flatten().is_some() {
+            reset();
+        }
+    });
+    let on_key = window_event_listener(leptos::ev::keydown, move |ev| {
+        if ev.key() == "Escape" && row_drag.press.try_get_value().flatten().is_some() {
+            reset();
+        }
+    });
+    on_cleanup(move || {
+        on_move.remove();
+        on_up.remove();
+        on_cancel.remove();
+        on_key.remove();
+    });
+    let ghost = move || {
+        store.entry_drag.with(|d| {
+            d.as_ref().map(|d| {
+                let name = d.path.rsplit('/').next().unwrap_or(&d.path).to_owned();
+                let hint = match store.drop_target.get() {
+                    Some(FileDrop::Terminal) => "escribir la ruta en la terminal",
+                    Some(FileDrop::Editor) => "abrir en el editor",
+                    Some(FileDrop::Explorer { .. }) => "mover aquí",
+                    None => "",
+                };
+                let (x, y) = row_drag.pos.get();
+                view! {
+                    <div
+                        class="drag-ghost"
+                        style:left=format!("{}px", x + 14)
+                        style:top=format!("{}px", y + 10)
+                    >
+                        <span>{name}</span>
+                        {(!hint.is_empty()).then(|| view! { <span class="muted">{hint}</span> })}
+                    </div>
+                }
+            })
+        })
+    };
     let label = move || {
         store.project.with(|p| {
             p.as_ref()
@@ -84,6 +203,7 @@ pub fn Explorer() -> impl IntoView {
                 }
                 None => view! { <p class="hint">"Sin worktree activo"</p> }.into_any(),
             }}
+            {ghost}
         </aside>
     }
 }
@@ -182,6 +302,32 @@ fn TreeEntry(worktree: u64, entry: DirEntryDto, parent: String, depth: usize) ->
     let name = entry.name.clone();
     let menu_path = full.clone();
     let is_dir = entry.kind == EntryKindDto::Dir;
+    let row_drag = expect_context::<RowDrag>();
+    let press_path = full.clone();
+    let on_press = move |ev: leptos::ev::PointerEvent| {
+        let renaming = RenameTarget::Entry {
+            worktree,
+            path: press_path.clone(),
+        };
+        // Arrastrar dentro del campo de renombrar selecciona texto.
+        if !store.is_renaming(&renaming) {
+            row_drag.start(
+                &ev,
+                EntryDrag {
+                    worktree,
+                    path: press_path.clone(),
+                    is_dir,
+                },
+            );
+        }
+    };
+    let lifted_path = full.clone();
+    let lifted = move || {
+        store.entry_drag.with(|d| {
+            d.as_ref()
+                .is_some_and(|d| d.worktree == worktree && d.path == lifted_path)
+        })
+    };
     let on_menu = move |ev: leptos::ev::MouseEvent| {
         store.open_menu(
             &ev,
@@ -215,9 +361,14 @@ fn TreeEntry(worktree: u64, entry: DirEntryDto, parent: String, depth: usize) ->
                         class="tree-row dir"
                         class:ignored=entry.ignored
                         class:drop-target=is_drop
+                        class:lifted=lifted
                         style:padding-left=padding
                         data-path=full.clone()
+                        on:pointerdown=on_press
                         on:click=move |_| {
+                            if row_drag.take_click() {
+                                return;
+                            }
                             store.explorer_selected.set(Some((worktree, toggle_key.clone(), true)));
                             store.toggle_expanded(worktree, &toggle_key)
                         }
@@ -269,10 +420,15 @@ fn TreeEntry(worktree: u64, entry: DirEntryDto, parent: String, depth: usize) ->
                                         .is_some_and(|f| f.worktree == worktree && f.path == selected_path)
                                 })
                         }
+                        class:lifted=lifted
                         style:padding-left=padding
                         data-path=full.clone()
                         on:contextmenu=on_menu
+                        on:pointerdown=on_press
                         on:click=move |_| {
+                            if row_drag.take_click() {
+                                return;
+                            }
                             store
                                 .explorer_selected
                                 .set(Some((worktree, open_path.clone(), false)));

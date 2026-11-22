@@ -10,7 +10,8 @@ pub mod git;
 pub mod store;
 
 pub use agents::{
-    AgentChunk, AgentExit, AgentRuntimePort, ChunkSink, ExitCallback, SpawnSpec, TermSize,
+    AgentChunk, AgentExit, AgentRuntimePort, ChunkSink, ExitCallback, SessionQuery, SpawnSpec,
+    TermSize,
 };
 pub use fs::{DirEntry, EntryKind, FileContent, FsChangeSink, FsPort};
 pub use git::{

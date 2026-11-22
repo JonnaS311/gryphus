@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::agent::AgentStatus;
+use crate::agent::{AgentStatus, ProviderId};
 use crate::config::ProviderConfig;
 use crate::ids::AgentId;
 
@@ -91,6 +91,23 @@ pub trait ChunkSink: Send + Sync {
 /// Se invoca una sola vez cuando el proceso termina.
 pub type ExitCallback = Box<dyn FnOnce(AgentExit) + Send>;
 
+/// Qué conversación buscar entre las que guardó el CLI de un proveedor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionQuery {
+    pub provider: ProviderId,
+    /// Entorno del proveedor: puede mover el almacenamiento (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`).
+    pub env: Vec<(String, String)>,
+    /// Worktree del agente.
+    pub cwd: PathBuf,
+    /// Id ya conocido: se devuelve si esa conversación se puede retomar.
+    pub known: Option<String>,
+    /// Sin id conocido: la conversación más antigua de `cwd` creada desde este
+    /// instante (ms Unix)…
+    pub since_ms: u64,
+    /// …que no sea de otro agente.
+    pub exclude: Vec<String>,
+}
+
 pub trait AgentRuntimePort: Send + Sync {
     fn spawn(&self, spec: SpawnSpec, on_exit: ExitCallback) -> PortResult<()>;
     fn write(&self, agent: AgentId, bytes: &[u8]) -> PortResult<()>;
@@ -99,6 +116,12 @@ pub trait AgentRuntimePort: Send + Sync {
     fn kill(&self, agent: AgentId) -> PortResult<()>;
     /// Envía primero `Scrollback` y luego `Data` en vivo hasta que se suelte la suscripción.
     fn attach(&self, agent: AgentId, sink: Arc<dyn ChunkSink>) -> PortResult<Subscription>;
+    /// Id de una conversación guardada por el CLI que se puede retomar
+    /// (docs/architecture/agents.md#reanudar-conversaciones). Por defecto, ninguna.
+    fn find_session(&self, query: &SessionQuery) -> Option<String> {
+        let _ = query;
+        None
+    }
 }
 
 #[cfg(test)]

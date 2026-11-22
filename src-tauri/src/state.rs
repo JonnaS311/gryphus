@@ -17,6 +17,17 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|p| p.into_inner())
 }
 
+/// `GRYPHUS_SCROLLBACK_BYTES` cambia el tamaño del scrollback de cada agente. Lo
+/// usan las e2e para que el buffer se llene con poca salida.
+fn scrollback_limit() -> Option<usize> {
+    std::env::var("GRYPHUS_SCROLLBACK_BYTES")
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+        .filter(|&n| n > 0)
+}
+
 /// Qué proyecto muestra cada ventana. Un proyecto vive en una sola ventana.
 #[derive(Default)]
 pub struct Registry {
@@ -135,7 +146,9 @@ impl AppState {
     pub fn ports(&self, events: Arc<dyn EventSink>) -> Ports {
         Ports {
             git: self.git.clone(),
-            agents: Arc::new(PtyRuntime::new()),
+            agents: Arc::new(
+                scrollback_limit().map_or_else(PtyRuntime::new, PtyRuntime::with_scrollback),
+            ),
             fs: self.fs.clone(),
             store: self.store.clone(),
             events,

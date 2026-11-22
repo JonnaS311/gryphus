@@ -1,5 +1,6 @@
 // Pegamento JS de Gryphus. Expone `window.GryphusJs` con dos fábricas:
-//   createTerminal(el, onData, onResize) y createEditor(el, onSave, onDirty).
+//   createTerminal(el, onData, onResize) y createEditor(el, onSave, onDirty),
+// y highlightHunk(name, kinds, texts) para colorear el diff.
 // Toda la lógica de la app vive en Rust (ui/src); aquí solo se envuelven
 // xterm.js y CodeMirror 6. El único consumidor es ui/src/bridge/.
 
@@ -19,8 +20,37 @@ import { markdown } from '@codemirror/lang-markdown';
 import { python } from '@codemirror/lang-python';
 import { html } from '@codemirror/lang-html';
 import { css } from '@codemirror/lang-css';
+import { sass } from '@codemirror/lang-sass';
+import { less } from '@codemirror/lang-less';
+import { yaml } from '@codemirror/lang-yaml';
+import { xml } from '@codemirror/lang-xml';
+import { sql } from '@codemirror/lang-sql';
+import { java } from '@codemirror/lang-java';
+import { cpp } from '@codemirror/lang-cpp';
+import { go } from '@codemirror/lang-go';
+import { php } from '@codemirror/lang-php';
+import { StreamLanguage, ensureSyntaxTree } from '@codemirror/language';
+import { tags as t, tagHighlighter, highlightTree } from '@lezer/highlight';
+import { shell } from '@codemirror/legacy-modes/mode/shell';
+import { dockerFile } from '@codemirror/legacy-modes/mode/dockerfile';
+import { toml } from '@codemirror/legacy-modes/mode/toml';
+import { properties } from '@codemirror/legacy-modes/mode/properties';
+import { powerShell } from '@codemirror/legacy-modes/mode/powershell';
+import { diff } from '@codemirror/legacy-modes/mode/diff';
+import { nginx } from '@codemirror/legacy-modes/mode/nginx';
+import { ruby } from '@codemirror/legacy-modes/mode/ruby';
+import { lua } from '@codemirror/legacy-modes/mode/lua';
+import { swift } from '@codemirror/legacy-modes/mode/swift';
+import { perl } from '@codemirror/legacy-modes/mode/perl';
+import { r } from '@codemirror/legacy-modes/mode/r';
+import { haskell } from '@codemirror/legacy-modes/mode/haskell';
+import { protobuf } from '@codemirror/legacy-modes/mode/protobuf';
+import { cmake } from '@codemirror/legacy-modes/mode/cmake';
+import { groovy } from '@codemirror/legacy-modes/mode/groovy';
+import { csharp, kotlin, scala, dart } from '@codemirror/legacy-modes/mode/clike';
 
 import { decode } from './stream.js';
+import { languageId } from './languages.js';
 
 // ── Terminal ────────────────────────────────────────────────────────────────
 
@@ -180,6 +210,9 @@ export function createTerminal(el, onData, onResize, onPasteNonText) {
     /** Ajusta al contenedor e informa el tamaño actual. */
     fit() {
       refit();
+      // También repinta: ConPTY redibuja la pantalla completa en cada resize, aunque
+      // el tamaño no cambie. Al cambiar de agente eso recupera lo que el scrollback
+      // ya no guarda (e2e/tests/terminal.rs → switching_agents_restores_the_screen).
       onResize(term.cols, term.rows);
     },
     focus() {
@@ -203,26 +236,151 @@ export function createTerminal(el, onData, onResize, onPasteNonText) {
 
 // ── Editor ──────────────────────────────────────────────────────────────────
 
-const LANGS = {
-  rs: () => rust(),
-  js: () => javascript(),
-  mjs: () => javascript(),
-  cjs: () => javascript(),
+const legacy = (mode) => () => StreamLanguage.define(mode);
+
+/** Lenguaje → fábrica de la extensión de CodeMirror. */
+const LANGUAGES = {
+  rust: () => rust(),
+  javascript: () => javascript(),
   jsx: () => javascript({ jsx: true }),
-  ts: () => javascript({ typescript: true }),
+  typescript: () => javascript({ typescript: true }),
   tsx: () => javascript({ typescript: true, jsx: true }),
   json: () => json(),
-  md: () => markdown(),
-  py: () => python(),
+  markdown: () => markdown(),
+  python: () => python(),
   html: () => html(),
-  htm: () => html(),
   css: () => css(),
+  sass: () => sass({ indented: true }),
+  scss: () => sass(),
+  less: () => less(),
+  yaml: () => yaml(),
+  xml: () => xml(),
+  sql: () => sql(),
+  java: () => java(),
+  cpp: () => cpp(),
+  go: () => go(),
+  php: () => php(),
+  shell: legacy(shell),
+  dockerfile: legacy(dockerFile),
+  toml: legacy(toml),
+  properties: legacy(properties),
+  powershell: legacy(powerShell),
+  diff: legacy(diff),
+  nginx: legacy(nginx),
+  ruby: legacy(ruby),
+  lua: legacy(lua),
+  swift: legacy(swift),
+  perl: legacy(perl),
+  r: legacy(r),
+  haskell: legacy(haskell),
+  protobuf: legacy(protobuf),
+  cmake: legacy(cmake),
+  groovy: legacy(groovy),
+  csharp: legacy(csharp),
+  kotlin: legacy(kotlin),
+  scala: legacy(scala),
+  dart: legacy(dart),
 };
 
 function languageFor(name) {
-  const ext = (name.split('.').pop() || '').toLowerCase();
-  const make = LANGS[ext];
-  return make ? make() : [];
+  const lang = languageId(name);
+  return lang ? LANGUAGES[lang]() : [];
+}
+
+// ── Resaltado del diff ──────────────────────────────────────────────────────
+
+/**
+ * Misma paleta que `oneDark` (el tema del editor), pero con clases `hl-*` que pinta
+ * ui/style.css: el diff no es una EditorView y no monta los estilos del tema.
+ */
+const diffHighlighter = tagHighlighter([
+  { tag: t.keyword, class: 'hl-violet' },
+  { tag: [t.name, t.deleted, t.character, t.propertyName, t.macroName], class: 'hl-coral' },
+  { tag: [t.function(t.variableName), t.labelName], class: 'hl-malibu' },
+  { tag: [t.color, t.constant(t.name), t.standard(t.name)], class: 'hl-whiskey' },
+  { tag: [t.definition(t.name), t.separator], class: 'hl-ivory' },
+  {
+    tag: [t.typeName, t.className, t.number, t.changed, t.annotation, t.modifier, t.self, t.namespace],
+    class: 'hl-chalky',
+  },
+  {
+    tag: [t.operator, t.operatorKeyword, t.url, t.escape, t.regexp, t.special(t.string)],
+    class: 'hl-cyan',
+  },
+  { tag: [t.meta, t.comment], class: 'hl-stone' },
+  { tag: t.strong, class: 'hl-strong' },
+  { tag: t.emphasis, class: 'hl-emphasis' },
+  { tag: t.strikethrough, class: 'hl-strike' },
+  { tag: t.link, class: 'hl-stone hl-link' },
+  { tag: t.heading, class: 'hl-coral hl-strong' },
+  { tag: [t.atom, t.bool, t.special(t.variableName)], class: 'hl-whiskey' },
+  { tag: [t.processingInstruction, t.string, t.inserted], class: 'hl-sage' },
+  { tag: t.invalid, class: 'hl-invalid' },
+]);
+
+/**
+ * Resalta `text` como el archivo `name`. Devuelve una entrada por línea, cada una
+ * una lista de tramos `[texto, clases]` (`clases` vacío = sin color).
+ */
+function highlightText(name, text) {
+  const lines = text.split('\n');
+  const plain = () => lines.map((l) => [[l, '']]);
+  const lang = languageFor(name);
+  if (Array.isArray(lang)) return plain();
+  const state = EditorState.create({ doc: text, extensions: [lang] });
+  // Tiempo acotado: un hunk enorme se queda sin color antes que congelar la UI.
+  const tree = ensureSyntaxTree(state, state.doc.length, 100);
+  if (!tree) return plain();
+
+  const out = [[]];
+  const emit = (from, to, cls) => {
+    if (to <= from) return;
+    const parts = text.slice(from, to).split('\n');
+    parts.forEach((part, i) => {
+      if (i > 0) out.push([]);
+      if (part) out[out.length - 1].push([part, cls]);
+    });
+  };
+  let pos = 0;
+  highlightTree(tree, diffHighlighter, (from, to, cls) => {
+    emit(pos, from, '');
+    emit(from, to, cls);
+    pos = to;
+  });
+  emit(pos, text.length, '');
+  while (out.length < lines.length) out.push([]);
+  return out;
+}
+
+/**
+ * Colores de sintaxis para las líneas de un hunk. `kinds` tiene un carácter por
+ * línea (`+` añadida, `-` borrada, ` ` contexto). Se parsean por separado la versión
+ * vieja (contexto + borradas) y la nueva (contexto + añadidas) para que mezclarlas
+ * no rompa el análisis (p. ej. un string que se abre en una y se cierra en otra).
+ * Devuelve, por línea, la lista de tramos `[texto, clases]`.
+ */
+export function highlightHunk(name, kinds, texts) {
+  const oldLines = [];
+  const newLines = [];
+  texts.forEach((text, i) => {
+    if (kinds[i] !== '+') oldLines.push(text);
+    if (kinds[i] !== '-') newLines.push(text);
+  });
+  const oldHl = highlightText(name, oldLines.join('\n'));
+  const newHl = highlightText(name, newLines.join('\n'));
+  let o = 0;
+  let n = 0;
+  return texts.map((_, i) => {
+    switch (kinds[i]) {
+      case '+':
+        return newHl[n++];
+      case '-':
+        return oldHl[o++];
+      default:
+        o++;
+        return newHl[n++];
+    }
+  });
 }
 
 /**

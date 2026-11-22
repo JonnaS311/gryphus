@@ -1,4 +1,6 @@
-//! Archivos arrastrados desde fuera de la app (explorador del sistema, escritorio…).
+//! Archivos arrastrados desde fuera de la app (explorador del sistema, escritorio…)
+//! y filas arrastradas desde el explorador de Gryphus ([`entry_target`]; el arrastre
+//! interno usa eventos del puntero, ver `panels::explorer`).
 //!
 //! WebView2 no entrega a la página las rutas de los archivos soltados: Tauri los
 //! intercepta y emite `tauri://drag-*` con las rutas absolutas y la posición (en
@@ -12,10 +14,10 @@ use leptos::prelude::*;
 use serde::de::IgnoredAny;
 use serde::Deserialize;
 
-use crate::bridge::dom::{hit_test, Hit};
+use crate::bridge::dom::{hit_test, hit_test_css, Hit};
 use crate::bridge::tauri::listen;
 use crate::logic;
-use crate::store::{FileDrop, Store};
+use crate::store::{EntryDrag, FileDrop, Store};
 
 const DRAG_ENTER: &str = "tauri://drag-enter";
 const DRAG_OVER: &str = "tauri://drag-over";
@@ -35,6 +37,18 @@ struct DragPayload {
     position: Position,
 }
 
+/// Carpeta del explorador bajo el puntero: la fila si es carpeta, la de su archivo
+/// si no, o la raíz.
+fn explorer_dir(store: Store, row: Option<(String, bool)>) -> Option<FileDrop> {
+    let worktree = store.active_worktree.get_untracked()?;
+    let dir = match row {
+        Some((path, true)) => path,
+        Some((path, false)) => logic::parent_dir(&path).to_owned(),
+        None => String::new(),
+    };
+    Some(FileDrop::Explorer { worktree, dir })
+}
+
 /// Destino bajo el punto, si acepta archivos.
 fn target_at(store: Store, pos: &Position) -> Option<FileDrop> {
     match hit_test(pos.x, pos.y)? {
@@ -42,19 +56,29 @@ fn target_at(store: Store, pos: &Position) -> Option<FileDrop> {
             .selected_agent
             .get_untracked()
             .map(|_| FileDrop::Terminal),
-        Hit::Explorer(row) => {
-            let worktree = store.active_worktree.get_untracked()?;
-            let dir = match row {
-                Some((path, true)) => path,
-                Some((path, false)) => logic::parent_dir(&path).to_owned(),
-                None => String::new(),
-            };
-            Some(FileDrop::Explorer { worktree, dir })
-        }
+        // El editor solo abre archivos del worktree (arrastrados desde el explorador).
+        Hit::Editor => None,
+        Hit::Explorer(row) => explorer_dir(store, row),
     }
 }
 
-fn set_target(store: Store, target: Option<FileDrop>) {
+/// Destino de una fila del explorador arrastrada hasta (`x`, `y`) en píxeles CSS:
+/// terminal (escribe la ruta), editor (abre el archivo) u otra carpeta (la mueve).
+pub fn entry_target(store: Store, drag: &EntryDrag, x: f64, y: f64) -> Option<FileDrop> {
+    match hit_test_css(x, y)? {
+        Hit::Terminal => store
+            .selected_agent
+            .get_untracked()
+            .map(|_| FileDrop::Terminal),
+        Hit::Editor => (!drag.is_dir).then_some(FileDrop::Editor),
+        Hit::Explorer(row) => explorer_dir(store, row).filter(|t| {
+            matches!(t, FileDrop::Explorer { worktree, dir }
+                if *worktree == drag.worktree && logic::can_move_into(&drag.path, dir))
+        }),
+    }
+}
+
+pub fn set_target(store: Store, target: Option<FileDrop>) {
     if store.drop_target.with_untracked(|t| *t != target) {
         store.drop_target.set(target);
     }
@@ -77,7 +101,7 @@ pub fn register(store: Store) {
                     .set(Some(logic::terminal_paths(&p.paths)));
             }
             Some(FileDrop::Explorer { worktree, dir }) => store.import(worktree, dir, p.paths),
-            None => {}
+            Some(FileDrop::Editor) | None => {}
         }
     });
 }

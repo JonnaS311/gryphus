@@ -8,6 +8,8 @@ publish.workspace = true
 [dependencies]
 gryphus-core = { workspace = true }
 portable-pty = { workspace = true }
+# Primera línea de los archivos de sesión de Codex (ver `sessions.rs`).
+serde_json = { workspace = true }
 
 [dev-dependencies]
 gryphus-testkit = { workspace = true }

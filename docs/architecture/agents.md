@@ -61,7 +61,21 @@ Se avisa una sola vez por orden. La UI marca la feature (cabecera parpadeando y 
 
 ## Persistencia de agentes
 
-El **registro** de agentes (id, feature, worktree, proveedor) se persiste en el estado del proyecto. Los **procesos** no sobreviven al cierre de la app: al reabrir el proyecto, los agentes aparecen como `Exited` y se pueden reiniciar con un clic en el mismo worktree.
+El **registro** de agentes (id, feature, worktree, proveedor y conversación) se persiste en el estado del proyecto. Los **procesos** no sobreviven al cierre de la app, pero las conversaciones sí: al reabrir el proyecto, los agentes que seguían activos al cerrarlo (o cuando la app se cayó) se **relanzan solos retomando su conversación**. Los que el usuario había detenido quedan `Exited`, y al reiniciarlos con un clic también retoman la suya. Un agente nuevo siempre empieza una conversación nueva.
+
+Si un agente no se puede relanzar (su worktree ya no existe, el proveedor no está configurado o el CLI no está instalado), queda detenido o fallido y el proyecto se abre igual.
+
+## Reanudar conversaciones
+
+Cada agente guarda `AgentSession { id, started_ms }`. Los argumentos de sesión van **antes** de los `args` de la configuración (`ProviderId::session_args`):
+
+| Proveedor | Lanzamiento nuevo | Retomar | Cómo se sabe el id |
+|---|---|---|---|
+| Claude Code | `--session-id <uuid>` | `--resume <uuid>` | Lo genera Gryphus. Solo se retoma si existe `<CLAUDE_CONFIG_DIR\|~/.claude>/projects/*/<uuid>.jsonl` (si nunca se le escribió, `--resume` fallaría y se empieza otra). |
+| OpenCode | `--session ses_…` | `--session ses_…` | Lo genera Gryphus con el formato de OpenCode; `--session` retoma o crea (OpenCode ≥ 2). |
+| Codex | — | `resume <id>` | Codex no deja elegirlo. Al terminar o cerrar el agente se busca en `<CODEX_HOME\|~/.codex>/sessions/**/rollout-*.jsonl` la conversación de su worktree (campo `cwd` de `session_meta`) más antigua creada desde que se lanzó y que no sea de otro agente. |
+
+La búsqueda está en `gryphus-agents/src/sessions.rs` (`AgentRuntimePort::find_session`); `CLAUDE_CONFIG_DIR` y `CODEX_HOME` se leen primero del `env` del proveedor. Si la conversación no aparece, el agente arranca una nueva. Evita poner en `args` flags de sesión propios (`--continue`, `--resume`…): chocarían con estos.
 
 ## Agente falso para pruebas
 
@@ -75,6 +89,7 @@ Al arrancar imprime `fake-agent ready` y luego interpreta línea a línea:
 | `::exit [N]` | termina con código `N` (0 por defecto) |
 | `::flood N` | imprime `line 0` … `line N-1` |
 | `::write RUTA CONTENIDO` | escribe el archivo relativo al cwd (crea carpetas) e imprime `wrote RUTA` |
+| `::spin N` | redibuja en el sitio `spin 00000` … `spin N-1` (20 ms por cuadro, como el indicador de un TUI) y termina con `spin done` |
 | otro `::…` | imprime `unknown command: …` |
 
 El lenguaje está definido una sola vez en `gryphus_testkit::agent_script`. Lo usan el binario y `FakeAgentRuntime`, así que el fake en memoria y el proceso real responden igual (ver [testing.md](../testing.md#fakes-gryphus-testkitfakes)).

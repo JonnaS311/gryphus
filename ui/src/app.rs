@@ -26,7 +26,9 @@ pub fn App() -> impl IntoView {
         if crate::bridge::icons::load().await.is_ok() {
             store.icons_ready.set(true);
         }
-        let _ = crate::bridge::glue::ensure_loaded().await;
+        if crate::bridge::glue::ensure_loaded().await.is_ok() {
+            store.glue_ready.set(true);
+        }
     });
     store.restore_and_load();
     register_events(store);
@@ -217,7 +219,11 @@ fn Workspace() -> impl IntoView {
     });
 
     view! {
-        <div class="shell" class:resizing=move || drag.with(Option::is_some)>
+        <div
+            class="shell"
+            class:resizing=move || drag.with(Option::is_some)
+            class:entry-dragging=move || store.entry_drag.with(Option::is_some)
+        >
             <div class="docks">
                 <DockedPane pane=Pane::Features drag>
                     <AgentsPanel/>

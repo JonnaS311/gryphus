@@ -38,11 +38,17 @@ pub mod cmd {
     pub const WRITE_FILE: &str = "write_file";
     /// Devuelve la ruta nueva.
     pub const RENAME_PATH: &str = "rename_path";
+    /// Mueve un archivo o carpeta a otro directorio del mismo worktree (arrastrar en
+    /// el explorador). Req: [`super::MovePathReq`]; devuelve la ruta nueva.
+    pub const MOVE_PATH: &str = "move_path";
     /// Pega una copia; devuelve la ruta creada.
     pub const COPY_PATH: &str = "copy_path";
     /// Muestra la ruta en el gestor de archivos del sistema (Explorador, Finder…).
     /// Req: [`super::PathReq`]; `""` abre la raíz del worktree.
     pub const REVEAL_PATH: &str = "reveal_path";
+    /// Manda un archivo o carpeta a la papelera del sistema. Req: [`super::PathReq`];
+    /// la raíz del worktree (`""`) no se puede eliminar.
+    pub const DELETE_PATH: &str = "delete_path";
     /// Copia rutas absolutas de fuera (soltar o pegar desde el sistema). Req:
     /// [`super::ImportPathsReq`]; devuelve las rutas creadas.
     pub const IMPORT_PATHS: &str = "import_paths";
@@ -237,6 +243,14 @@ pub struct RenamePathReq {
     pub path: String,
     /// Solo el nombre nuevo (un componente), no una ruta.
     pub new_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MovePathReq {
+    pub worktree: u64,
+    pub path: String,
+    /// Directorio destino; "" es la raíz. Nunca sobrescribe.
+    pub to_dir: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -468,8 +482,10 @@ mod tests {
             cmd::READ_FILE,
             cmd::WRITE_FILE,
             cmd::RENAME_PATH,
+            cmd::MOVE_PATH,
             cmd::COPY_PATH,
             cmd::REVEAL_PATH,
+            cmd::DELETE_PATH,
             cmd::IMPORT_PATHS,
             cmd::CLIPBOARD_FILES,
             cmd::CLIPBOARD_COPY_PATH,

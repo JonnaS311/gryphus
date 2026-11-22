@@ -99,6 +99,84 @@ async fn diff_file_list_jumps_to_the_file() {
     app.quit().await;
 }
 
+/// Resaltado de sintaxis por tipo de archivo (`ui/js/src/languages.js`): cada archivo
+/// abre en el editor real con su lenguaje, tanto los de `@codemirror/lang-*` como los
+/// `legacy-modes`, y los nombres especiales (`Dockerfile`, `Makefile`, `.env.local`).
+/// Un `.txt` sigue sin resaltado. Detecta que un lenguaje mapeado deje de cargarse
+/// (p. ej. un import roto en el bundle) aunque los tests de `node --test` pasen.
+#[tokio::test(flavor = "multi_thread")]
+async fn editor_highlights_by_file_type() {
+    e2e!();
+    let _serial = SERIAL.lock().await;
+    let fx = Fixture::new();
+    let root = fx.repo.root();
+    // La primera línea es un comentario del lenguaje con el nombre del archivo: así
+    // se sabe que el editor ya muestra ese documento (y no el anterior, que también
+    // estaba resaltado) y siempre hay algo que colorear.
+    let files = [
+        ("main.go", "// {}\npackage main\n"),
+        ("config.yaml", "# {}\nclave: valor\n"),
+        ("query.sql", "-- {}\nSELECT 1;\n"),
+        ("Program.java", "// {}\nclass A {}\n"),
+        ("app.toml", "# {}\n[seccion]\n"),
+        ("Dockerfile", "# {}\nFROM alpine\n"),
+        ("Dockerfile.dev", "# {}\nFROM alpine\n"),
+        ("Makefile", "# {}\nall:\n"),
+        (".env.local", "# {}\nCLAVE=valor\n"),
+        ("deploy.sh", "# {}\necho hola\n"),
+        ("estilos.scss", "// {}\n$a: 1px;\n"),
+        ("vista.xml", "<!-- {} -->\n<a/>\n"),
+        ("Main.kt", "// {}\nfun main() {}\n"),
+        ("notas.txt", "# {}\nhola\n"),
+    ];
+    for (name, body) in files {
+        fx.repo
+            .write_file(root, name, &body.replacen("{}", name, 1));
+    }
+    fx.repo.commit_all(root, "archivos de varios lenguajes");
+
+    let app = App::start(&fx).await;
+    app.open_project(&fx.root()).await;
+    let row = |path: &str| format!(r#".tree-row[data-path="{path}"]"#);
+    // Tokens resaltados (CodeMirror los envuelve en <span>) si el editor ya muestra
+    // `name`; `None` mientras siga el documento anterior. Una sola lectura del DOM.
+    let tokens = |name: &'static str| {
+        let app = &app;
+        async move {
+            app.script(
+                "const c = document.querySelector('.cm-content');
+                 if (!c || !c.textContent.includes(arguments[0])) return null;
+                 return c.querySelectorAll('.cm-line span').length;",
+                vec![json!(name)],
+            )
+            .await
+            .as_u64()
+        }
+    };
+
+    let (plain, highlighted) = files.split_last().unwrap();
+    for &(name, _) in highlighted {
+        app.click(&row(name)).await;
+        app.wait_css(&format!("{}.active", tab(name))).await;
+        wait_for(&format!("resaltado de {name}"), || async {
+            tokens(name).await.is_some_and(|n| n > 0)
+        })
+        .await;
+    }
+
+    // Sin lenguaje: el texto se ve, pero sin tokens.
+    let (name, _) = *plain;
+    app.click(&row(name)).await;
+    wait_for(&format!("{name} en el editor"), || async {
+        tokens(name).await.is_some()
+    })
+    .await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert_eq!(tokens(name).await, Some(0), "un .txt no se resalta");
+
+    app.quit().await;
+}
+
 /// Pestañas del editor: abrir varias, cambiar con clic y Ctrl+Tab, conservar el
 /// texto sin guardar, recargar desde disco y cerrar con el diálogo
 /// Cancelar / No guardar / Guardar (el modal real, sin auto-confirmación).

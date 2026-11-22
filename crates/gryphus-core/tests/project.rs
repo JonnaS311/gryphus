@@ -4,7 +4,8 @@ use std::path::PathBuf;
 
 use gryphus_core::ports::WorktreeInfo;
 use gryphus_core::{
-    AgentStatus, BranchName, DomainError, FeatureId, FeatureName, Project, ProviderId, WorktreeId,
+    AgentSession, AgentStatus, BranchName, DomainError, FeatureId, FeatureName, Project,
+    ProviderId, WorktreeId,
 };
 
 fn info(path: &str, branch: &str, is_main: bool) -> WorktreeInfo {
@@ -255,7 +256,8 @@ fn reset_after_restart_marks_active_agents_as_exited() {
     p.set_agent_status(failed, AgentStatus::Failed { reason: "x".into() })
         .unwrap();
 
-    p.reset_after_restart();
+    // Seguía activo (la app se cayó): se relanza. El fallido no.
+    assert_eq!(p.reset_after_restart(), [running]);
     assert_eq!(
         p.agent(running).unwrap().status(),
         &AgentStatus::Exited { code: None }
@@ -264,6 +266,39 @@ fn reset_after_restart_marks_active_agents_as_exited() {
         p.agent(failed).unwrap().status(),
         AgentStatus::Failed { .. }
     ));
+    assert!(p.reset_after_restart().is_empty(), "la marca se consume");
+}
+
+#[test]
+fn agents_active_at_close_are_reopened_once() {
+    let (mut p, _, a, _) = project();
+    let (f, running) = feature_with_agent(&mut p, a);
+    p.set_agent_status(running, AgentStatus::Running).unwrap();
+    let stopped = p.add_agent(f, a, ProviderId::Codex).unwrap();
+    p.set_agent_status(stopped, AgentStatus::Exited { code: Some(0) })
+        .unwrap();
+
+    assert_eq!(p.mark_active_for_reopen(), [running]);
+    // Al cerrar, el proceso muere y termina como `Exited` antes de guardar.
+    p.set_agent_status(running, AgentStatus::Exited { code: None })
+        .unwrap();
+    let mut reopened: Project = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
+    assert_eq!(reopened.reset_after_restart(), [running]);
+    assert!(reopened.reset_after_restart().is_empty());
+}
+
+#[test]
+fn agent_session_is_saved_and_survives_serialization() {
+    let (mut p, _, a, _) = project();
+    let (_, agent) = feature_with_agent(&mut p, a);
+    assert_eq!(p.agent(agent).unwrap().session(), None);
+    let session = AgentSession {
+        id: Some("u-1".into()),
+        started_ms: 42,
+    };
+    p.set_agent_session(agent, session.clone()).unwrap();
+    let back: Project = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
+    assert_eq!(back.agent(agent).unwrap().session(), Some(&session));
 }
 
 // ── Persistencia ─────────────────────────────────────────────────────────────

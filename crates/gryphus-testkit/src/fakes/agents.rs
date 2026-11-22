@@ -5,14 +5,15 @@
 //! por eso un sink no debe llamar de vuelta al runtime. `on_exit` se invoca sin lock.
 
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use gryphus_core::ports::{
     AgentChunk, AgentExit, AgentRuntimePort, ChunkSink, ExitCallback, PortError, PortErrorKind,
-    PortResult, SpawnSpec, Subscription, TermSize,
+    PortResult, SessionQuery, SpawnSpec, Subscription, TermSize,
 };
-use gryphus_core::AgentId;
+use gryphus_core::{AgentId, ProviderId};
 
 use super::{err, lock, FailSwitch};
 use crate::agent_script::{self, Action};
@@ -39,6 +40,8 @@ struct Inner {
     procs: Mutex<HashMap<AgentId, Proc>>,
     programs: Mutex<HashSet<String>>,
     spawned: Mutex<Vec<SpawnSpec>>,
+    /// Conversaciones "guardadas por el CLI": (proveedor, cwd, id).
+    sessions: Mutex<Vec<(ProviderId, PathBuf, String)>>,
     next_sub: AtomicU64,
     fail: FailSwitch,
 }
@@ -66,6 +69,7 @@ impl FakeAgentRuntime {
                 procs: Mutex::new(HashMap::new()),
                 programs: Mutex::new(programs),
                 spawned: Mutex::new(Vec::new()),
+                sessions: Mutex::new(Vec::new()),
                 next_sub: AtomicU64::new(0),
                 fail: FailSwitch::default(),
             }),
@@ -83,6 +87,11 @@ impl FakeAgentRuntime {
 
     pub fn spawned(&self) -> Vec<SpawnSpec> {
         lock(&self.inner.spawned).clone()
+    }
+
+    /// Simula que el CLI de `provider` guardó la conversación `id` en `cwd`.
+    pub fn save_session(&self, provider: ProviderId, cwd: &Path, id: &str) {
+        lock(&self.inner.sessions).push((provider, cwd.to_path_buf(), id.to_owned()));
     }
 
     pub fn written(&self, agent: AgentId) -> Vec<u8> {
@@ -146,6 +155,13 @@ impl FakeAgentRuntime {
                     .collect();
                 self.emit(agent, block.as_bytes());
             }
+            Action::Spin(n) => {
+                let mut block: String = (0..n)
+                    .map(|i| format!("\r{}", agent_script::spin_frame(i)))
+                    .collect();
+                block.push_str(&format!("\r{}\r\n", agent_script::SPIN_DONE));
+                self.emit(agent, block.as_bytes());
+            }
             Action::Write { path, .. } => self.line(agent, &agent_script::wrote_line(&path)),
             Action::Unknown(text) => self.line(agent, &agent_script::unknown_line(&text)),
             Action::Exit(code) => self.finish(agent, AgentExit::Code(Some(code))),
@@ -161,6 +177,20 @@ fn not_found<T>(agent: AgentId) -> PortResult<T> {
 }
 
 impl AgentRuntimePort for FakeAgentRuntime {
+    /// Como el real: con id conocido, si existe; sin él, la más antigua de `cwd` sin
+    /// dueño (aquí "más antigua" = guardada antes; `since_ms` no se usa).
+    fn find_session(&self, query: &SessionQuery) -> Option<String> {
+        lock(&self.inner.sessions)
+            .iter()
+            .filter(|(p, cwd, _)| *p == query.provider && *cwd == query.cwd)
+            .map(|(_, _, id)| id)
+            .find(|id| match &query.known {
+                Some(known) => *id == known,
+                None => !query.exclude.contains(id),
+            })
+            .cloned()
+    }
+
     fn spawn(&self, spec: SpawnSpec, on_exit: ExitCallback) -> PortResult<()> {
         self.inner.fail.check()?;
         if !lock(&self.inner.programs).contains(&spec.program) {

@@ -51,39 +51,43 @@ impl MenuItem {
     }
 }
 
-/// Texto de "mostrar en el gestor de archivos", con el nombre del de cada sistema.
+/// Texto de "abrir en el gestor de archivos", con el nombre del de cada sistema.
 fn reveal_label() -> &'static str {
     match dom::os() {
-        dom::Os::Windows => "Mostrar en el Explorador",
-        dom::Os::Mac => "Mostrar en Finder",
-        dom::Os::Linux => "Abrir carpeta contenedora",
+        dom::Os::Windows => "Abrir en el Explorador de archivos",
+        dom::Os::Mac => "Abrir en Finder",
+        dom::Os::Linux => "Abrir en el gestor de archivos",
     }
 }
 
-/// Copiar ruta, copiar ruta relativa y mostrar en el gestor de archivos.
+/// Copiar ruta relativa, copiar ruta absoluta y abrir en el gestor de archivos.
+/// En la raíz (`path` vacío) no hay ruta relativa que copiar.
 fn path_items(store: Store, worktree: u64, path: String) -> Vec<MenuItem> {
     let (abs, rel) = (path.clone(), path.clone());
-    let reveal = if path.is_empty() {
-        match dom::os() {
-            dom::Os::Mac => "Abrir en Finder",
-            _ => "Abrir en el gestor de archivos",
-        }
-    } else {
-        reveal_label()
-    };
-    let mut items = vec![
-        MenuItem::new(reveal, move || store.reveal_in_os(worktree, path.clone()))
-            .id("reveal")
-            .after_separator(),
-        MenuItem::new("Copiar ruta", move || {
+    let mut items = Vec::new();
+    if !rel.is_empty() {
+        items.push(
+            MenuItem::new("Copiar ruta relativa", move || {
+                store.copy_path_text(worktree, rel.clone(), true)
+            })
+            .id("copy-relative"),
+        );
+    }
+    items.push(
+        MenuItem::new("Copiar ruta absoluta", move || {
             store.copy_path_text(worktree, abs.clone(), false)
         })
+        .id("copy-absolute"),
+    );
+    items.push(
+        MenuItem::new(reveal_label(), move || {
+            store.reveal_in_os(worktree, path.clone())
+        })
+        .id("reveal")
         .after_separator(),
-    ];
-    if !rel.is_empty() {
-        items.push(MenuItem::new("Copiar ruta relativa", move || {
-            store.copy_path_text(worktree, rel.clone(), true)
-        }));
+    );
+    if let Some(first) = items.first_mut() {
+        first.separator = true;
     }
     items
 }
@@ -108,7 +112,7 @@ fn items(store: Store, target: MenuTarget) -> Vec<MenuItem> {
             } else {
                 logic::parent_dir(&path).to_owned()
             };
-            let (rename_path, copy_path) = (path.clone(), path.clone());
+            let (rename_path, copy_path, delete_path) = (path.clone(), path.clone(), path.clone());
             let mut items = vec![
                 MenuItem::new("Renombrar", move || {
                     store.renaming.set(Some(RenameTarget::Entry {
@@ -122,6 +126,13 @@ fn items(store: Store, target: MenuTarget) -> Vec<MenuItem> {
                 MenuItem::new("Pegar", move || store.paste(worktree, paste_dir.clone())),
             ];
             items.extend(path_items(store, worktree, path));
+            items.push(
+                MenuItem::new("Eliminar", move || {
+                    store.delete_entry(worktree, delete_path.clone(), is_dir)
+                })
+                .id("delete")
+                .after_separator(),
+            );
             items
         }
         // "Pegar" siempre activo: puede haber archivos en el portapapeles del sistema.

@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::agent::{Agent, AgentStatus, ProviderId};
+use crate::agent::{Agent, AgentSession, AgentStatus, ProviderId};
 use crate::error::{DomainError, DomainResult};
 use crate::feature::Feature;
 use crate::ids::{AgentId, FeatureId, ProjectId, WorktreeId};
@@ -258,6 +258,8 @@ impl Project {
             provider,
             status: AgentStatus::Starting,
             name: Some(name),
+            session: None,
+            reopen: false,
         });
         Ok(id)
     }
@@ -326,14 +328,47 @@ impl Project {
         Ok(self.agents.remove(idx))
     }
 
+    /// Guarda la conversación del CLI del agente (para retomarla al relanzarlo).
+    pub fn set_agent_session(&mut self, agent: AgentId, session: AgentSession) -> DomainResult<()> {
+        self.agent_mut(agent)?.session = Some(session);
+        Ok(())
+    }
+
+    /// Al cerrar el proyecto: marca los agentes activos para relanzarlos al reabrirlo.
+    /// Devuelve cuáles.
+    pub fn mark_active_for_reopen(&mut self) -> Vec<AgentId> {
+        self.agents
+            .iter_mut()
+            .filter(|a| a.status.is_active())
+            .map(|a| {
+                a.reopen = true;
+                a.id
+            })
+            .collect()
+    }
+
     /// Tras reabrir la app ningún proceso sigue vivo (ADR-013): los agentes activos
-    /// pasan a `Exited { code: None }`.
-    pub fn reset_after_restart(&mut self) {
+    /// pasan a `Exited { code: None }`. Devuelve los que hay que relanzar: los que
+    /// seguían activos al cerrar (o al caerse la app), y quita esa marca.
+    pub fn reset_after_restart(&mut self) -> Vec<AgentId> {
+        let mut reopen = Vec::new();
         for agent in &mut self.agents {
             if agent.status.is_active() {
                 agent.status = AgentStatus::Exited { code: None };
+                agent.reopen = true;
+            }
+            if std::mem::take(&mut agent.reopen) {
+                reopen.push(agent.id);
             }
         }
+        reopen
+    }
+
+    fn agent_mut(&mut self, agent: AgentId) -> DomainResult<&mut Agent> {
+        self.agents
+            .iter_mut()
+            .find(|a| a.id == agent)
+            .ok_or(DomainError::AgentNotFound(agent))
     }
 
     // ── Invariantes ──────────────────────────────────────────────────────────

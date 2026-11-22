@@ -6,6 +6,7 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 
 use crate::bridge::dom;
+use crate::bridge::highlight as bridge_highlight;
 use crate::bridge::icons as bridge_icons;
 use crate::icons;
 use crate::ipc;
@@ -189,29 +190,66 @@ fn DiffFile(file: FileDiffDto) -> impl IntoView {
                 file.hunks
                     .into_iter()
                     .map(|hunk| {
+                        let header = format!(
+                            "@@ -{},{} +{},{} @@",
+                            hunk.old_start,
+                            hunk.old_lines,
+                            hunk.new_start,
+                            hunk.new_lines,
+                        );
+                        let kinds: String = hunk
+                            .lines
+                            .iter()
+                            .map(|l| match l.kind {
+                                LineKindDto::Added => '+',
+                                LineKindDto::Removed => '-',
+                                LineKindDto::Context => ' ',
+                            })
+                            .collect();
+                        let texts: Vec<String> = hunk.lines.into_iter().map(|l| l.text).collect();
+                        let name = file.path.clone();
                         view! {
                             <div class="hunk">
-                                <div class="hunk-header">
-                                    {format!(
-                                        "@@ -{},{} +{},{} @@",
-                                        hunk.old_start,
-                                        hunk.old_lines,
-                                        hunk.new_start,
-                                        hunk.new_lines,
-                                    )}
-                                </div>
-                                {hunk
-                                    .lines
-                                    .into_iter()
-                                    .map(|line| {
-                                        let (class, sign) = match line.kind {
-                                            LineKindDto::Added => ("line added", "+"),
-                                            LineKindDto::Removed => ("line removed", "-"),
-                                            LineKindDto::Context => ("line", " "),
-                                        };
-                                        view! { <div class=class>{format!("{sign} {}", line.text)}</div> }
-                                    })
-                                    .collect_view()}
+                                <div class="hunk-header">{header}</div>
+                                // Sin colores hasta que carga el pegamento JS; luego se repinta.
+                                {move || {
+                                    let spans = store
+                                        .glue_ready
+                                        .get()
+                                        .then(|| {
+                                            bridge_highlight::highlight_hunk(&name, &kinds, texts.clone())
+                                        })
+                                        .flatten()
+                                        .filter(|s| s.len() == texts.len());
+                                    kinds
+                                        .chars()
+                                        .zip(texts.iter())
+                                        .enumerate()
+                                        .map(|(i, (kind, text))| {
+                                            let class = match kind {
+                                                '+' => "line added",
+                                                '-' => "line removed",
+                                                _ => "line",
+                                            };
+                                            let body = match &spans {
+                                                Some(spans) => spans[i]
+                                                    .iter()
+                                                    .map(|(t, c)| {
+                                                        view! { <span class=c.clone()>{t.clone()}</span> }
+                                                    })
+                                                    .collect_view()
+                                                    .into_any(),
+                                                None => text.clone().into_any(),
+                                            };
+                                            view! {
+                                                <div class=class>
+                                                    <span class="sign">{format!("{kind} ")}</span>
+                                                    <span class="code">{body}</span>
+                                                </div>
+                                            }
+                                        })
+                                        .collect_view()
+                                }}
                             </div>
                         }
                     })

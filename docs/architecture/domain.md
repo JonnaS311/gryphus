@@ -55,7 +55,9 @@ pub struct Agent    { id: AgentId, feature: FeatureId, worktree: WorktreeId, pro
 | `add_agent(f, wt, provider)` → `Starting` | `WORKTREE_NOT_IN_FEATURE`, `WORKTREE_MISSING` |
 | `set_agent_status(a, status)` | `INVALID_TRANSITION` |
 | `remove_agent(a)` | `AGENT_STILL_RUNNING` |
-| `reset_after_restart()` | — (activos → `Exited { code: None }`, ADR-013) |
+| `set_agent_session(a, session)` | `AGENT_NOT_FOUND` (conversación del CLI, ver [agents.md](agents.md#reanudar-conversaciones)) |
+| `mark_active_for_reopen() -> Vec<AgentId>` | — (al cerrar: los activos se relanzarán al reabrir) |
+| `reset_after_restart() -> Vec<AgentId>` | — (activos → `Exited { code: None }`, ADR-013; devuelve los que hay que relanzar: activos o marcados, y quita la marca) |
 | `check_invariants()` | `INVARIANT_VIOLATION` |
 
 Garantía: **una operación que devuelve error no modifica el proyecto** (verificado por propiedades).

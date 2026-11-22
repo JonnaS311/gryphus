@@ -20,7 +20,7 @@ pub mod ports;
 pub mod project;
 pub mod worktree;
 
-pub use agent::{Agent, AgentStatus, ProviderId};
+pub use agent::{is_valid_session_id, Agent, AgentSession, AgentStatus, ProviderId, SessionLaunch};
 pub use config::{Config, ProviderConfig};
 pub use error::{DomainError, DomainResult};
 pub use events::{DomainEvent, EventSink};

@@ -12,6 +12,7 @@
 #![forbid(unsafe_code)]
 
 mod resolve;
+mod sessions;
 
 use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
@@ -22,7 +23,7 @@ use std::time::{Duration, Instant};
 
 use gryphus_core::ports::{
     AgentChunk, AgentExit, AgentRuntimePort, ChunkSink, ExitCallback, PortError, PortErrorKind,
-    PortResult, SpawnSpec, Subscription, TermSize,
+    PortResult, SessionQuery, SpawnSpec, Subscription, TermSize,
 };
 use gryphus_core::AgentId;
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
@@ -226,6 +227,10 @@ fn flusher_loop(proc: Arc<AgentProc>, limit: usize) {
 }
 
 impl AgentRuntimePort for PtyRuntime {
+    fn find_session(&self, query: &SessionQuery) -> Option<String> {
+        sessions::find_session(query)
+    }
+
     fn spawn(&self, spec: SpawnSpec, on_exit: ExitCallback) -> PortResult<()> {
         if lock(&self.inner.agents)
             .get(&spec.agent)

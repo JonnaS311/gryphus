@@ -12,7 +12,7 @@ use super::diff::DiffView;
 use super::editor::CodeEditor;
 use super::terminal::AgentTerminal;
 use crate::layout::{CenterView, DropTarget};
-use crate::store::Store;
+use crate::store::{FileDrop, Store};
 
 /// Píxeles que hay que mover el puntero para que un clic en una pestaña pase a arrastre.
 const DRAG_THRESHOLD: i32 = 6;
@@ -84,6 +84,11 @@ pub fn MainView() -> impl IntoView {
         view! {
             <div
                 class="view"
+                class:view-editor={v == CenterView::Editor}
+                class:drop-target=move || {
+                    v == CenterView::Editor
+                        && store.drop_target.with(|t| matches!(t, Some(FileDrop::Editor)))
+                }
                 class:split={move || column.get() > 0}
                 style:grid-column=move || (column.get() + 1).to_string()
                 style:display=move || if shown.get() { "flex" } else { "none" }

@@ -7,6 +7,7 @@
 //! | `::exit [N]` | termina con código `N` (0 por defecto) |
 //! | `::flood N` | imprime `line 0` … `line N-1` |
 //! | `::write RUTA CONTENIDO` | escribe el archivo (relativo al cwd) e imprime `wrote RUTA` |
+//! | `::spin N` | redibuja en el sitio una línea `spin 00000` … `spin N-1` (como el indicador de un TUI) y termina con `spin done` |
 //!
 //! Lo comparten el binario `tools/fake-agent` y [`crate::FakeAgentRuntime`].
 
@@ -17,6 +18,7 @@ pub enum Action {
     Echo(String),
     Exit(i32),
     Flood(u32),
+    Spin(u32),
     Write { path: String, content: String },
     Unknown(String),
 }
@@ -42,6 +44,11 @@ pub fn parse(line: &str) -> Action {
             .and_then(|n| n.trim().parse().ok())
             .map(Action::Flood)
             .unwrap_or_else(unknown),
+        "spin" => parts
+            .next()
+            .and_then(|n| n.trim().parse().ok())
+            .map(Action::Spin)
+            .unwrap_or_else(unknown),
         "write" => match parts.next() {
             Some(path) if !path.is_empty() => Action::Write {
                 path: path.to_owned(),
@@ -61,6 +68,13 @@ pub fn flood_line(i: u32) -> String {
     format!("line {i}")
 }
 
+/// Cuadro `i` de `::spin`: se escribe tras `\r`, sobre el anterior.
+pub fn spin_frame(i: u32) -> String {
+    format!("spin {i:05}")
+}
+
+pub const SPIN_DONE: &str = "spin done ";
+
 pub fn wrote_line(path: &str) -> String {
     format!("wrote {path}")
 }
@@ -79,6 +93,7 @@ mod tests {
         assert_eq!(parse("::exit"), Action::Exit(0));
         assert_eq!(parse("::exit 3"), Action::Exit(3));
         assert_eq!(parse("::flood 10"), Action::Flood(10));
+        assert_eq!(parse("::spin 5"), Action::Spin(5));
         assert_eq!(
             parse("::write sub/a.txt hola mundo"),
             Action::Write {
@@ -90,7 +105,14 @@ mod tests {
 
     #[test]
     fn malformed_commands_are_unknown() {
-        for bad in ["::exit x", "::flood", "::flood -1", "::write", "::nada"] {
+        for bad in [
+            "::exit x",
+            "::flood",
+            "::flood -1",
+            "::spin",
+            "::write",
+            "::nada",
+        ] {
             assert_eq!(parse(bad), Action::Unknown(bad.into()), "{bad}");
         }
     }

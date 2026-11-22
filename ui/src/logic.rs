@@ -102,6 +102,12 @@ pub fn rebase_path(path: &str, old: &str, new: &str) -> Option<String> {
         .map(|rest| format!("{new}{rest}"))
 }
 
+/// ¿Tiene sentido mover `path` dentro de `dir` arrastrándolo en el explorador?
+/// No si ya está ahí, ni si `dir` es la propia carpeta o está dentro de ella.
+pub fn can_move_into(path: &str, dir: &str) -> bool {
+    !path.is_empty() && parent_dir(path) != dir && rebase_path(dir, path, "").is_none()
+}
+
 /// Al renombrar un archivo se preselecciona el nombre sin extensión (como VS Code).
 /// En unidades UTF-16, que es lo que espera `setSelectionRange`.
 pub fn rename_selection(name: &str, is_file: bool) -> u32 {
@@ -225,6 +231,17 @@ pub fn terminal_paths(paths: &[String]) -> String {
     out
 }
 
+/// Teclas que piden al CLI del agente pegar la imagen del portapapeles del sistema.
+/// Claude Code en Windows usa Alt+V (allí Ctrl+V lo reserva el terminal); en el
+/// resto, y para los demás proveedores, Ctrl+V.
+pub fn image_paste_keys(provider: &str, windows: bool) -> &'static str {
+    if windows && provider == "claude" {
+        "\x1bv"
+    } else {
+        "\u{16}"
+    }
+}
+
 /// `↑2 ↓1`, o vacío si está al día o no tiene upstream.
 pub fn tracking_text(b: &BranchDto) -> String {
     let mut parts = Vec::new();
@@ -257,6 +274,13 @@ mod tests {
         assert_eq!(absolute_path("/home/r", "", false), "/home/r");
         assert_eq!(native_path("src/a.rs", true), r"src\a.rs");
         assert_eq!(native_path("src/a.rs", false), "src/a.rs");
+    }
+
+    #[test]
+    fn image_paste_uses_alt_v_for_claude_on_windows() {
+        assert_eq!(image_paste_keys("claude", true), "\x1bv");
+        assert_eq!(image_paste_keys("claude", false), "\u{16}");
+        assert_eq!(image_paste_keys("codex", true), "\u{16}");
     }
 
     fn wt(id: u64, branch: Option<&str>, is_main: bool) -> WorktreeDto {
@@ -428,6 +452,21 @@ mod tests {
         assert_eq!(tab_hint(tabs, "ui/src/main.rs").as_deref(), Some("ui/src"));
         assert_eq!(tab_hint(tabs, "main.rs").as_deref(), Some("./"));
         assert_eq!(tab_hint(tabs, "Cargo.toml"), None);
+    }
+
+    #[test]
+    fn moves_only_into_other_directories() {
+        assert!(can_move_into("src/a.rs", ""));
+        assert!(can_move_into("a.rs", "src"));
+        assert!(can_move_into("src", "docs"));
+        assert!(can_move_into("src", "src2"));
+        // Ya está ahí.
+        assert!(!can_move_into("a.rs", ""));
+        assert!(!can_move_into("src/a.rs", "src"));
+        // Dentro de sí misma.
+        assert!(!can_move_into("src", "src"));
+        assert!(!can_move_into("src", "src/sub"));
+        assert!(!can_move_into("", "src"));
     }
 
     #[test]

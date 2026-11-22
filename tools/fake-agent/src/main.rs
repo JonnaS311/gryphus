@@ -21,6 +21,15 @@ fn main() -> io::Result<()> {
                     writeln!(out, "{}", agent_script::flood_line(i))?;
                 }
             }
+            Action::Spin(n) => {
+                // Con pausas, para que ConPTY emita cada cuadro y no solo el último.
+                for i in 0..n {
+                    write!(out, "\r{}", agent_script::spin_frame(i))?;
+                    out.flush()?;
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                writeln!(out, "\r{}", agent_script::SPIN_DONE)?;
+            }
             Action::Write { path, content } => {
                 if let Some(parent) = Path::new(&path).parent() {
                     fs::create_dir_all(parent)?;

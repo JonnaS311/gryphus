@@ -1,18 +1,21 @@
 //! [`ProjectSession`]: casos de uso de un proyecto abierto.
 
+use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
+use std::hash::{BuildHasher, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use gryphus_core::ports::{
     AgentChunk, AgentExit, AgentRuntimePort, Branch, ChunkSink, Diff, DiffBase, DirEntry,
-    FileContent, FileStatus, FsPort, GitPort, NewWorktree, PortError, PortErrorKind, SpawnSpec,
-    StorePort, Subscription, TermSize,
+    FileContent, FileStatus, FsPort, GitPort, NewWorktree, PortError, PortErrorKind, SessionQuery,
+    SpawnSpec, StorePort, Subscription, TermSize,
 };
 use gryphus_core::{
-    AgentId, AgentName, AgentStatus, BranchName, Config, DomainError, DomainEvent, EventSink,
-    FeatureId, FeatureName, PathError, Project, ProjectId, ProviderId, RelPath, WorktreeId,
+    AgentId, AgentName, AgentSession, AgentStatus, BranchName, Config, DomainError, DomainEvent,
+    EventSink, FeatureId, FeatureName, PathError, Project, ProjectId, ProviderId, RelPath,
+    SessionLaunch, WorktreeId,
 };
 
 use crate::activity::{Activity, ActivitySink, POLL_EVERY};
@@ -90,7 +93,7 @@ impl ProjectSession {
             .store
             .load_project(&id)?
             .unwrap_or_else(|| Project::new(root.clone()));
-        project.reset_after_restart();
+        let reopen = project.reset_after_restart();
         project.name_unnamed_agents();
         project.sync_worktrees(&ports.git.list_worktrees(&root)?);
         ports.store.save_project(&project)?;
@@ -107,6 +110,12 @@ impl ProjectSession {
         });
         inner.ensure_watches();
         spawn_idle_ticker(Arc::downgrade(&inner));
+        // Los agentes que seguían activos al cerrar vuelven a su conversación. Uno que
+        // no se puede relanzar (worktree borrado, proveedor sin configurar, CLI
+        // desinstalado) queda detenido o fallido, como antes; el proyecto se abre igual.
+        for agent in reopen {
+            let _ = inner.restart(agent);
+        }
         Ok(Self { inner })
     }
 
@@ -297,19 +306,13 @@ impl ProjectSession {
             .inner
             .mutate(|p| p.add_agent(feature, worktree, provider))?;
         self.inner.publish(DomainEvent::FeatureChanged(feature));
-        self.inner.launch(agent)?;
+        self.inner.launch(agent, false)?;
         Ok(agent)
     }
 
+    /// Relanza un agente detenido retomando su conversación, si el CLI la guardó.
     pub fn restart_agent(&self, agent: AgentId) -> AppResult<()> {
-        self.inner
-            .mutate(|p| p.set_agent_status(agent, AgentStatus::Starting))?;
-        // Sin este evento la UI seguía mostrando "terminado" hasta el siguiente cambio.
-        self.inner.publish(DomainEvent::AgentStatusChanged {
-            agent,
-            status: AgentStatus::Starting,
-        });
-        self.inner.launch(agent)
+        self.inner.restart(agent)
     }
 
     pub fn stop_agent(&self, agent: AgentId) -> AppResult<()> {
@@ -406,6 +409,32 @@ impl ProjectSession {
         let from = RelPath::parse(path)?;
         let name = single_component(new_name)?;
         let to = from.parent().unwrap_or_default().join(&name)?;
+        self.inner.ports.fs.rename(&root, &from, &to)?;
+        Ok(to)
+    }
+
+    /// Mueve `path` dentro del directorio `to_dir` del mismo worktree, con el mismo
+    /// nombre. Nunca sobrescribe (`ALREADY_EXISTS`) ni mete una carpeta dentro de sí
+    /// misma. Soltar en su propio directorio no hace nada. Devuelve la ruta nueva.
+    pub fn move_path(&self, worktree: WorktreeId, path: &str, to_dir: &str) -> AppResult<RelPath> {
+        let root = self.inner.worktree_path(worktree)?;
+        let from = RelPath::parse(path)?;
+        let to_dir = RelPath::parse(to_dir)?;
+        let Some(name) = from.file_name() else {
+            return Err(PathError::InvalidComponent(String::new()).into());
+        };
+        let to = to_dir.join(name)?;
+        if to == from {
+            return Ok(to);
+        }
+        // Ver `write_file`: `.git` es de git.
+        if let Some(first) = to
+            .components()
+            .next()
+            .filter(|c| c.eq_ignore_ascii_case(".git"))
+        {
+            return Err(PathError::InvalidComponent(first.to_owned()).into());
+        }
         self.inner.ports.fs.rename(&root, &from, &to)?;
         Ok(to)
     }
@@ -513,15 +542,24 @@ impl ProjectSession {
 
     // ── Ciclo de vida ────────────────────────────────────────────────────────
 
-    /// Detiene los agentes activos, deja de vigilar y guarda (ADR-013).
+    /// Detiene los agentes activos, deja de vigilar y guarda (ADR-013). Los activos
+    /// quedan marcados para relanzarse, con su conversación, al reabrir el proyecto.
     pub fn close(&self) -> AppResult<()> {
-        let active: Vec<AgentId> = lock(&self.inner.project)
+        let mut active: Vec<(u64, AgentId)> = lock(&self.inner.project)
             .agents()
             .iter()
             .filter(|a| a.status().is_active())
-            .map(|a| a.id())
+            .map(|a| (a.session().map_or(0, |s| s.started_ms), a.id()))
             .collect();
-        for agent in active {
+        // Aunque no se pueda guardar la marca, los procesos se detienen igual.
+        let _ = self.inner.mutate(|p| Ok(p.mark_active_for_reopen()));
+        // En orden de lanzamiento: si dos agentes Codex comparten worktree, cada uno
+        // se queda con la conversación más antigua que quede libre.
+        active.sort();
+        for (_, agent) in &active {
+            self.inner.remember_session(*agent);
+        }
+        for (_, agent) in active {
             let _ = self.inner.ports.agents.kill(agent);
         }
         lock(&self.inner.watches).clear();
@@ -656,18 +694,73 @@ impl Inner {
         }
     }
 
-    /// Lanza el proceso de un agente en estado `Starting`.
-    fn launch(self: &Arc<Self>, agent: AgentId) -> AppResult<()> {
+    /// Relanza un agente detenido retomando su conversación. Valida antes de pasar
+    /// a `Starting`: si no, un error lo dejaba "iniciando" para siempre.
+    fn restart(self: &Arc<Self>, agent: AgentId) -> AppResult<()> {
+        {
+            let p = lock(&self.project);
+            let a = p.agent(agent)?;
+            self.config.provider(a.provider())?;
+            if p.worktree(a.worktree())?.is_missing() {
+                return Err(DomainError::WorktreeMissing(a.worktree()).into());
+            }
+        }
+        self.mutate(|p| p.set_agent_status(agent, AgentStatus::Starting))?;
+        // Sin este evento la UI seguía mostrando "terminado" hasta el siguiente cambio.
+        self.publish(DomainEvent::AgentStatusChanged {
+            agent,
+            status: AgentStatus::Starting,
+        });
+        self.launch(agent, true)
+    }
+
+    /// Lanza el proceso de un agente en estado `Starting`. Con `resume`, retoma la
+    /// conversación anterior si el CLI la guardó; si no, empieza una nueva.
+    fn launch(self: &Arc<Self>, agent: AgentId, resume: bool) -> AppResult<()> {
         let (provider, cwd) = {
             let p = lock(&self.project);
             let a = p.agent(agent)?;
             (a.provider(), p.worktree(a.worktree())?.path().to_path_buf())
         };
         let config = self.config.provider(provider)?;
-        let spec = SpawnSpec::new(agent, config, cwd, TermSize::default());
+        let resumed = resume
+            .then(|| self.session_query(agent))
+            .flatten()
+            .and_then(|(query, started_ms)| {
+                Some((self.ports.agents.find_session(&query)?, started_ms))
+            });
+        let (session, session_args) = match resumed {
+            Some((id, started_ms)) => {
+                let args = provider.session_args(SessionLaunch::Resume(&id));
+                (
+                    AgentSession {
+                        id: Some(id),
+                        started_ms,
+                    },
+                    args,
+                )
+            }
+            None => {
+                let now = now_ms();
+                let id = provider.new_session_id(entropy(), now);
+                let args = provider.session_args(SessionLaunch::New(id.as_deref()));
+                (
+                    AgentSession {
+                        id,
+                        started_ms: now,
+                    },
+                    args,
+                )
+            }
+        };
+        // Si no se puede guardar, el agente se lanza igual (solo no se podrá retomar).
+        let _ = self.mutate(|p| p.set_agent_session(agent, session));
+        let mut spec = SpawnSpec::new(agent, config, cwd, TermSize::default());
+        spec.args.splice(0..0, session_args);
         let weak = Arc::downgrade(self);
         let on_exit = Box::new(move |exit: AgentExit| {
             if let Some(inner) = weak.upgrade() {
+                inner.remember_session(agent);
                 inner.set_status(agent, exit.into());
             }
         });
@@ -692,6 +785,52 @@ impl Inner {
                 );
                 Err(e.into())
             }
+        }
+    }
+
+    /// Búsqueda de la conversación del agente y cuándo empezó. `None` si nunca se lanzó
+    /// con esta versión (no hay con qué acotar la búsqueda).
+    fn session_query(&self, agent: AgentId) -> Option<(SessionQuery, u64)> {
+        let p = lock(&self.project);
+        let a = p.agent(agent).ok()?;
+        let session = a.session()?;
+        let env = self
+            .config
+            .provider(a.provider())
+            .map(|c| c.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            .unwrap_or_default();
+        let exclude = p
+            .agents()
+            .iter()
+            .filter(|o| o.id() != agent)
+            .filter_map(|o| o.session()?.id.clone())
+            .collect();
+        let query = SessionQuery {
+            provider: a.provider(),
+            env,
+            cwd: p.worktree(a.worktree()).ok()?.path().to_path_buf(),
+            known: session.id.clone(),
+            since_ms: session.started_ms,
+            exclude,
+        };
+        Some((query, session.started_ms))
+    }
+
+    /// Anota el id de una conversación que Gryphus no pudo elegir (Codex) en cuanto
+    /// el CLI la guardó, antes de que otro agente del mismo worktree cree la suya.
+    fn remember_session(&self, agent: AgentId) {
+        let Some((query, started_ms)) = self.session_query(agent) else {
+            return;
+        };
+        if query.known.is_some() {
+            return;
+        }
+        if let Some(id) = self.ports.agents.find_session(&query) {
+            let session = AgentSession {
+                id: Some(id),
+                started_ms,
+            };
+            let _ = self.mutate(|p| p.set_agent_session(agent, session));
         }
     }
 
@@ -751,6 +890,28 @@ impl Inner {
             .filter_map(|(id, a)| a.poll(now).then_some(*id))
             .collect()
     }
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
+}
+
+/// Aleatoriedad para ids de conversación sin dependencias: cada `RandomState` lleva
+/// claves sembradas por el sistema operativo.
+fn entropy() -> u128 {
+    let state = RandomState::new();
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let half = |salt: u64| {
+        let mut h = state.build_hasher();
+        h.write_u64(salt);
+        h.write_u128(nanos);
+        u128::from(h.finish())
+    };
+    (half(1) << 64) | half(2)
 }
 
 /// Revisa periódicamente el silencio de los agentes. Termina al cerrarse la sesión.

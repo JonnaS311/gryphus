@@ -28,6 +28,7 @@ tauri-build = { workspace = true }
 tauri = { workspace = true }
 tauri-plugin-dialog = { workspace = true }
 arboard = { workspace = true }
+trash = { workspace = true }
 gryphus-core = { workspace = true }
 gryphus-app = { workspace = true }
 gryphus-ipc = { workspace = true }

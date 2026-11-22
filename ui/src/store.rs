@@ -83,15 +83,26 @@ pub struct Clipboard {
     pub in_system: bool,
 }
 
-/// Dónde caerían los archivos que se arrastran desde fuera (resaltado).
+/// Dónde caerían los archivos que se arrastran desde fuera o desde el explorador
+/// (resaltado).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FileDrop {
     Terminal,
+    /// Abrir el archivo en el editor (solo arrastrando un archivo del explorador).
+    Editor,
     /// Directorio del explorador (`""` = raíz).
     Explorer {
         worktree: u64,
         dir: String,
     },
+}
+
+/// Fila del explorador que se está arrastrando.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntryDrag {
+    pub worktree: u64,
+    pub path: String,
+    pub is_dir: bool,
 }
 
 /// Confirmación pendiente (modal `app::ConfirmDialog`): "Cancelar" más una o
@@ -135,6 +146,8 @@ pub struct Store {
     pub expanded: RwSignal<HashSet<(u64, String)>>,
     /// Las tablas de iconos ya se cargaron (el explorador se repinta al cambiar).
     pub icons_ready: RwSignal<bool>,
+    /// El pegamento JS (xterm/CodeMirror) ya cargó: el diff se repinta con colores.
+    pub glue_ready: RwSignal<bool>,
     pub settings: RwSignal<Settings>,
     pub settings_open: RwSignal<bool>,
     /// Lado y ancho de los paneles Features y Explorador (`localStorage`).
@@ -157,6 +170,8 @@ pub struct Store {
     /// origen de Ctrl+C y el destino de Ctrl+V en el explorador.
     pub explorer_selected: RwSignal<Option<(u64, String, bool)>>,
     pub drop_target: RwSignal<Option<FileDrop>>,
+    /// Fila del explorador que se arrastra (ya pasó el umbral de movimiento).
+    pub entry_drag: RwSignal<Option<EntryDrag>>,
     /// Texto que la terminal del agente debe pegar (rutas soltadas o pegadas).
     pub terminal_paste: RwSignal<Option<String>>,
 }
@@ -183,6 +198,7 @@ impl Store {
             error: RwSignal::new(None),
             expanded: RwSignal::new(HashSet::new()),
             icons_ready: RwSignal::new(false),
+            glue_ready: RwSignal::new(false),
             settings: RwSignal::new(Settings::default()),
             settings_open: RwSignal::new(false),
             panes: RwSignal::new(Panes::default()),
@@ -196,6 +212,7 @@ impl Store {
             attention: RwSignal::new(HashSet::new()),
             explorer_selected: RwSignal::new(None),
             drop_target: RwSignal::new(None),
+            entry_drag: RwSignal::new(None),
             terminal_paste: RwSignal::new(None),
         }
     }
@@ -404,6 +421,76 @@ impl Store {
         });
     }
 
+    /// Suelta una fila arrastrada desde el explorador:
+    /// - terminal: escribe su ruta (relativa si el agente trabaja en ese worktree);
+    /// - editor: abre el archivo;
+    /// - carpeta del explorador: la mueve allí.
+    pub fn drop_entry(self, drag: EntryDrag, target: FileDrop) {
+        match target {
+            FileDrop::Terminal => {
+                let windows = dom::os() == dom::Os::Windows;
+                let text = self.project.with_untracked(|p| {
+                    let p = p.as_ref()?;
+                    let agent_wt = self
+                        .selected_agent
+                        .get_untracked()
+                        .and_then(|id| p.agents.iter().find(|a| a.id == id))
+                        .map(|a| a.worktree)?;
+                    if agent_wt == drag.worktree {
+                        Some(logic::native_path(&drag.path, windows))
+                    } else {
+                        let root = &logic::worktree(p, drag.worktree)?.path;
+                        Some(logic::absolute_path(root, &drag.path, windows))
+                    }
+                });
+                if let Some(text) = text {
+                    self.terminal_paste
+                        .set(Some(logic::terminal_paths(&[text])));
+                }
+            }
+            FileDrop::Editor => {
+                if drag.is_dir {
+                    return;
+                }
+                self.explorer_selected
+                    .set(Some((drag.worktree, drag.path.clone(), false)));
+                self.open_file.set(Some(OpenFile {
+                    worktree: drag.worktree,
+                    path: drag.path,
+                }));
+                self.show_view(CenterView::Editor);
+            }
+            FileDrop::Explorer { worktree, dir } => {
+                if worktree != drag.worktree || !logic::can_move_into(&drag.path, &dir) {
+                    return;
+                }
+                if let Some(dirty) = self.dirty_under(worktree, &drag.path) {
+                    self.error.set(Some(format!(
+                        "Guarda o cierra «{}» antes de moverlo: tiene cambios sin guardar.",
+                        dirty.name()
+                    )));
+                    return;
+                }
+                let old = drag.path;
+                spawn_local(async move {
+                    match ipc::move_path(worktree, old.clone(), dir.clone()).await {
+                        Ok(new) => {
+                            if !dir.is_empty() {
+                                self.expanded.update(|set| {
+                                    set.insert((worktree, dir));
+                                });
+                            }
+                            self.explorer_selected
+                                .set(Some((worktree, new.clone(), drag.is_dir)));
+                            self.path_renamed(worktree, &old, &new);
+                        }
+                        Err(e) => self.report(e),
+                    }
+                });
+            }
+        }
+    }
+
     fn after_paste(&self, worktree: u64, dir: String, result: Result<(), IpcError>) {
         // Aun con error puede haberse copiado algo: se refresca igual.
         if result.is_ok() && !dir.is_empty() {
@@ -420,15 +507,27 @@ impl Store {
 
     /// Pega en la terminal del agente lo que hay en el portapapeles del sistema cuando
     /// no es texto: las rutas de los archivos copiados o, si no hay archivos (p. ej.
-    /// una captura de pantalla), un Ctrl+V para que el agente lea el portapapeles.
+    /// una captura de pantalla), la tecla con la que su CLI lee la imagen del
+    /// portapapeles (ver `logic::image_paste_keys`).
     pub fn paste_non_text_into_agent(self) {
         let Some(agent) = self.selected_agent.get_untracked() else {
             return;
         };
+        let provider = self
+            .project
+            .with_untracked(|p| {
+                p.as_ref()?
+                    .agents
+                    .iter()
+                    .find(|a| a.id == agent)
+                    .map(|a| a.provider.clone())
+            })
+            .unwrap_or_default();
+        let keys = logic::image_paste_keys(&provider, dom::os() == dom::Os::Windows);
         spawn_local(async move {
             let files = ipc::clipboard_files().await.unwrap_or_default();
             if files.is_empty() {
-                let _ = ipc::agent_input(agent, "\u{16}".into()).await;
+                let _ = ipc::agent_input(agent, keys.into()).await;
             } else {
                 self.terminal_paste.set(Some(logic::terminal_paths(&files)));
             }
@@ -455,6 +554,80 @@ impl Store {
                 self.error.set(Some(message));
             }
         });
+    }
+
+    /// Pide confirmación y manda `path` (archivo o carpeta) a la papelera del sistema.
+    /// Cierra sus pestañas y olvida lo que apuntaba dentro (carpetas abiertas,
+    /// selección, portapapeles).
+    pub fn delete_entry(self, worktree: u64, path: String, is_dir: bool) {
+        if path.is_empty() {
+            return;
+        }
+        let name = path.rsplit('/').next().unwrap_or(&path).to_owned();
+        let what = if is_dir { "la carpeta" } else { "el archivo" };
+        let mut message =
+            format!("¿Eliminar {what} «{name}»?\nSe moverá a la papelera del sistema.");
+        if let Some(dirty) = self.dirty_under(worktree, &path) {
+            message.push_str(&format!(
+                "\n«{}» tiene cambios sin guardar que se perderán.",
+                dirty.name()
+            ));
+        }
+        spawn_local(async move {
+            if !self.ask(message).await {
+                return;
+            }
+            if let Err(e) = ipc::delete_path(worktree, path.clone()).await {
+                self.report(e);
+                return;
+            }
+            self.path_deleted(worktree, &path);
+        });
+    }
+
+    fn path_deleted(&self, worktree: u64, path: &str) {
+        let inside = |wt: u64, p: &str| wt == worktree && logic::rebase_path(p, path, "").is_some();
+        let removed: Vec<OpenFile> = self.open_files.with_untracked(|tabs| {
+            tabs.iter()
+                .filter(|f| inside(f.worktree, &f.path))
+                .cloned()
+                .collect()
+        });
+        if !removed.is_empty() {
+            let active = self.open_file.get_untracked();
+            let active_idx = active.as_ref().and_then(|a| {
+                self.open_files
+                    .with_untracked(|t| t.iter().position(|f| f == a))
+            });
+            self.dirty_files
+                .update(|d| d.retain(|f| !removed.contains(f)));
+            self.open_files
+                .update(|t| t.retain(|f| !removed.contains(f)));
+            if active.as_ref().is_some_and(|a| removed.contains(a)) {
+                // La pestaña que queda más cerca de la que se cerró.
+                let next = self.open_files.with_untracked(|t| {
+                    let i = active_idx.unwrap_or(0).min(t.len().saturating_sub(1));
+                    t.get(i).cloned()
+                });
+                self.open_file.set(next);
+            }
+        }
+        self.expanded
+            .update(|set| set.retain(|(wt, p)| !inside(*wt, p)));
+        if self
+            .explorer_selected
+            .with_untracked(|s| s.as_ref().is_some_and(|(wt, p, _)| inside(*wt, p)))
+        {
+            self.explorer_selected.set(None);
+        }
+        if self
+            .clipboard
+            .with_untracked(|c| c.as_ref().is_some_and(|c| inside(c.worktree, &c.path)))
+        {
+            self.clipboard.set(None);
+        }
+        self.fs_tick.update(|t| *t += 1);
+        self.bump_git();
     }
 
     /// Muestra `path` en el gestor de archivos del sistema (`""` abre la raíz).

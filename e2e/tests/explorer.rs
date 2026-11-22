@@ -1,6 +1,7 @@
 //! Archivos de fuera de la app en el explorador y en la terminal del agente:
 //! soltarlos (arrastrar desde el explorador del sistema) y pegarlos (Ctrl+C en el
-//! sistema → Ctrl+V / "Pegar" en Gryphus), contra la app real.
+//! sistema → Ctrl+V / "Pegar" en Gryphus), contra la app real. También arrastrar
+//! filas del propio explorador (mover, abrir en el editor, ruta en la terminal).
 //! Ejecutar: `GRYPHUS_E2E=1 cargo test -p gryphus-e2e --test explorer -- --nocapture`.
 
 mod common;
@@ -102,6 +103,92 @@ async fn dropping_files_on_the_explorer_copies_them() {
     app.wait_css(&row("con espacio.txt")).await;
     assert!(root.join("con espacio.txt").exists());
     app.screenshot("11-explorador-soltar").await;
+    app.quit().await;
+}
+
+/// Arrastrar filas desde el explorador de Gryphus: a otra carpeta las mueve (y a la
+/// zona vacía, a la raíz), al editor abre el archivo y a la terminal del agente
+/// escribe su ruta. Mientras se arrastra, una etiqueta sigue al puntero, la fila
+/// queda atenuada y se resalta el destino; donde no se puede soltar no se resalta.
+#[tokio::test(flavor = "multi_thread")]
+async fn dragging_explorer_rows_moves_opens_and_writes_paths() {
+    e2e!();
+    let _serial = SERIAL.lock().await;
+    let fx = Fixture::new();
+    let root = fx.repo.root().to_path_buf();
+    std::fs::create_dir_all(root.join("docs")).unwrap();
+    std::fs::write(root.join("docs").join("leeme.txt"), "l").unwrap();
+    std::fs::write(root.join("a.txt"), "contenido").unwrap();
+
+    let app = App::start(&fx).await;
+    app.open_project(&fx.root()).await;
+    app.wait_css(&row("a.txt")).await;
+
+    // A otra carpeta: resalta el destino, atenúa la fila y explica qué pasará.
+    app.drag_over(&row("a.txt"), &row("docs")).await;
+    app.wait_css(&format!("{}.drop-target", row("docs"))).await;
+    app.wait_css(&format!("{}.lifted", row("a.txt"))).await;
+    app.wait_dom_text(".drag-ghost", "mover aquí").await;
+    app.screenshot("14-explorador-arrastrar").await;
+    app.release_pointer().await;
+    app.wait_gone(".drag-ghost").await;
+    // La carpeta destino se expande y muestra el archivo movido.
+    app.wait_css(&row("docs/a.txt")).await;
+    app.wait_gone(&row("a.txt")).await;
+    assert_eq!(read(&root.join("docs").join("a.txt")), "contenido");
+    assert!(!root.join("a.txt").exists(), "se mueve, no se copia");
+
+    // Una carpeta no se puede soltar dentro de sí misma: no hay destino ni cambios.
+    app.drag_over(&row("docs"), &row("docs/leeme.txt")).await;
+    app.wait_css(".drag-ghost").await;
+    settle().await;
+    assert!(!app.exists(".drop-target").await, "sin destino válido");
+    app.release_pointer().await;
+    app.wait_gone(".drag-ghost").await;
+    assert!(root.join("docs").join("leeme.txt").exists());
+
+    // A la zona vacía del explorador: a la raíz.
+    app.drag_and_drop(&row("docs/a.txt"), ".pane-right .pane-header")
+        .await;
+    app.wait_css(&row("a.txt")).await;
+    assert!(root.join("a.txt").exists());
+
+    // Al editor (visible tras abrir un archivo): abre el archivo soltado.
+    app.click(&row("a.txt")).await;
+    app.wait_text("#editor-path", "a.txt").await;
+    app.drag_over(&row("docs/leeme.txt"), ".view-editor").await;
+    app.wait_css(".view-editor.drop-target").await;
+    app.wait_dom_text(".drag-ghost", "abrir en el editor").await;
+    app.release_pointer().await;
+    app.wait_text("#editor-path", "docs/leeme.txt").await;
+    // Una carpeta no se abre en el editor.
+    app.drag_over(&row("docs"), ".view-editor").await;
+    app.wait_css(".drag-ghost").await;
+    settle().await;
+    assert!(
+        !app.exists(".drop-target").await,
+        "una carpeta no va al editor"
+    );
+    app.release_pointer().await;
+    app.wait_gone(".drag-ghost").await;
+
+    // A la terminal del agente: escribe la ruta, relativa a su worktree (el que
+    // sigue el explorador al elegir el agente).
+    app.click("#new-feature").await;
+    app.type_into("#feature-name", "arrastre").await;
+    app.click("#create-feature").await;
+    app.click(r#".feature[data-feature="arrastre"] .launch"#)
+        .await;
+    app.wait_terminal("fake-agent ready").await;
+    app.drag_over(&row("README.md"), ".terminal").await;
+    app.wait_css(".terminal.drop-target").await;
+    app.wait_dom_text(".drag-ghost", "terminal").await;
+    app.release_pointer().await;
+    app.wait_gone(".terminal.drop-target").await;
+    settle().await;
+    app.click(".terminal").await;
+    app.type_active(ENTER).await;
+    app.wait_terminal("echo: README.md").await;
     app.quit().await;
 }
 

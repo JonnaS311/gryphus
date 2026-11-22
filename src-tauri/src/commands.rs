@@ -496,6 +496,20 @@ pub async fn rename_path(
 }
 
 #[tauri::command]
+pub async fn move_path(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    req: MovePathReq,
+) -> CmdResult<String> {
+    with_session(&state, &window, move |s| {
+        s.move_path(WorktreeId::from_raw(req.worktree), &req.path, &req.to_dir)
+            .map(String::from)
+            .map_err(dto::error)
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn copy_path(
     window: WebviewWindow,
     state: State<'_, AppState>,
@@ -532,6 +546,37 @@ pub async fn reveal_path(
             });
         }
         crate::reveal::reveal(&path, !req.path.is_empty()).map_err(internal)
+    })
+    .await
+}
+
+/// Manda el archivo o carpeta a la papelera del sistema (recuperable desde allí).
+#[tauri::command]
+pub async fn delete_path(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    req: PathReq,
+) -> CmdResult<()> {
+    with_session(&state, &window, move |s| {
+        if req.path.trim_matches(['/', '\\', '.']).is_empty() {
+            return Err(IpcError {
+                code: "INVALID".into(),
+                message: "no se puede eliminar la raíz del worktree".into(),
+            });
+        }
+        let path = s
+            .absolute_path(WorktreeId::from_raw(req.worktree), &req.path)
+            .map_err(dto::error)?;
+        if std::fs::symlink_metadata(&path).is_err() {
+            return Err(IpcError {
+                code: "NOT_FOUND".into(),
+                message: format!("{} no existe", path.display()),
+            });
+        }
+        trash::delete(&path).map_err(|e| IpcError {
+            code: "TRASH".into(),
+            message: format!("no se pudo mandar a la papelera {}: {e}", path.display()),
+        })
     })
     .await
 }

@@ -132,6 +132,19 @@ pub async fn rename_path(worktree: u64, path: String, new_name: String) -> IpcRe
     .await
 }
 
+/// Mueve `path` dentro de `to_dir` (mismo worktree); devuelve la ruta nueva.
+pub async fn move_path(worktree: u64, path: String, to_dir: String) -> IpcResult<String> {
+    invoke(
+        cmd::MOVE_PATH,
+        Some(&MovePathReq {
+            worktree,
+            path,
+            to_dir,
+        }),
+    )
+    .await
+}
+
 /// Pega una copia de `from` dentro de `to_dir`; devuelve la ruta creada.
 pub async fn copy_path(
     from_worktree: u64,
@@ -154,6 +167,11 @@ pub async fn copy_path(
 /// Muestra la ruta en el gestor de archivos del sistema (`""` abre la raíz).
 pub async fn reveal_path(worktree: u64, path: String) -> IpcResult<()> {
     invoke(cmd::REVEAL_PATH, Some(&PathReq { worktree, path })).await
+}
+
+/// Manda el archivo o carpeta a la papelera del sistema.
+pub async fn delete_path(worktree: u64, path: String) -> IpcResult<()> {
+    invoke(cmd::DELETE_PATH, Some(&PathReq { worktree, path })).await
 }
 
 /// Copia rutas absolutas de fuera dentro de `to_dir`; devuelve las rutas creadas.

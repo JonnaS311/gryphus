@@ -144,7 +144,8 @@ async fn feature_agent_editor_and_diff() {
     app.quit().await;
 }
 
-/// Flujo 9: cerrar y reabrir → las features persisten; los agentes quedan detenidos.
+/// Flujo 9: cerrar y reabrir → las features persisten; los agentes que seguían
+/// activos se relanzan solos (retomando su conversación).
 #[tokio::test(flavor = "multi_thread")]
 async fn state_persists_across_restarts() {
     e2e!();
@@ -165,7 +166,7 @@ async fn state_persists_across_restarts() {
     let second = App::start(&fx).await;
     second.wait_css(".shell").await;
     second.wait_css(feature).await;
-    second.wait_text(".agent .agent-status", "detenido").await;
+    second.wait_text(".agent .agent-status", "activo").await;
     second.screenshot("06-reabierto").await;
     second.quit().await;
 }
@@ -288,8 +289,62 @@ async fn initial_agent_from_settings() {
     app.quit().await;
 }
 
+/// Explorador: "Eliminar" pide confirmación, manda a la papelera y cierra la pestaña.
+#[tokio::test(flavor = "multi_thread")]
+async fn explorer_delete_entry() {
+    e2e!();
+    let _serial = SERIAL.lock().await;
+    let fx = Fixture::new();
+    let tmp = fx.repo.root().join("tmp-borrar");
+    std::fs::create_dir_all(&tmp).unwrap();
+    std::fs::write(tmp.join("a.txt"), "x\n").unwrap();
+    std::fs::write(fx.repo.root().join("suelto.txt"), "y\n").unwrap();
+    let app = App::start(&fx).await;
+    app.open_project(&fx.root()).await;
+
+    // Archivo abierto en el editor: cancelar no borra; aceptar lo borra y cierra la pestaña.
+    let file = r#".tree-row[data-path="suelto.txt"]"#;
+    app.click(file).await;
+    app.right_click(file).await;
+    app.click(r#".context-menu [data-action="delete"]"#).await;
+    app.wait_text(".confirm-message", "suelto.txt").await;
+    app.click("#confirm-cancel").await;
+    app.wait_gone(".confirm").await;
+    assert!(fx.repo.root().join("suelto.txt").exists());
+
+    app.right_click(file).await;
+    app.click(r#".context-menu [data-action="delete"]"#).await;
+    app.click("#confirm-accept").await;
+    app.wait_gone(file).await;
+    assert!(!fx.repo.root().join("suelto.txt").exists());
+    assert!(!app.exists(".toast").await, "eliminar no dio error");
+
+    // Carpeta con contenido.
+    let dir = r#".tree-row[data-path="tmp-borrar"]"#;
+    app.right_click(dir).await;
+    app.click(r#".context-menu [data-action="delete"]"#).await;
+    app.wait_text(".confirm-message", "carpeta").await;
+    app.click("#confirm-accept").await;
+    app.wait_gone(dir).await;
+    assert!(!tmp.exists());
+
+    // La raíz no tiene "Eliminar" y el backend no borra la raíz ni fuera del worktree.
+    app.right_click(".pane-right .pane-header").await;
+    assert!(!app.exists(r#".context-menu [data-action="delete"]"#).await);
+    app.type_active(ESCAPE).await;
+    let project = app.invoke("get_project", json!(null)).await;
+    let worktree = project["worktrees"][0]["id"].clone();
+    for path in ["", ".", "../fuera"] {
+        let res = app
+            .invoke_result("delete_path", json!({ "worktree": worktree, "path": path }))
+            .await;
+        assert!(res.is_err(), "{path:?}: {res:?}");
+    }
+    assert!(fx.repo.root().exists());
+}
+
 /// Explorador: copiar la ruta absoluta y la relativa al portapapeles del sistema,
-/// y "Mostrar en el Explorador/Finder". Abrir de verdad el gestor de archivos no se
+/// y "Abrir en el Explorador de archivos/Finder". Abrir de verdad el gestor de archivos no se
 /// automatiza (dejaría ventanas abiertas): se comprueban el menú y la validación.
 #[tokio::test(flavor = "multi_thread")]
 async fn explorer_copy_paths_and_reveal() {
@@ -309,7 +364,7 @@ async fn explorer_copy_paths_and_reveal() {
 
     // Ruta absoluta: con el separador del sistema y apuntando al archivo.
     app.right_click(file).await;
-    app.click(r#".context-menu [data-action="Copiar ruta"]"#)
+    app.click(r#".context-menu [data-action="copy-absolute"]"#)
         .await;
     let absolute = app.wait_copied().await;
     if cfg!(windows) {
@@ -335,7 +390,7 @@ async fn explorer_copy_paths_and_reveal() {
 
     // Ruta relativa al worktree.
     app.right_click(file).await;
-    app.click(r#".context-menu [data-action="Copiar ruta relativa"]"#)
+    app.click(r#".context-menu [data-action="copy-relative"]"#)
         .await;
     let relative = if cfg!(windows) {
         r"docs\guía rápida.md"
@@ -347,10 +402,10 @@ async fn explorer_copy_paths_and_reveal() {
     // Zona vacía: la raíz del worktree (sin "ruta relativa").
     app.right_click(".pane-right .pane-header").await;
     assert!(
-        !app.exists(r#".context-menu [data-action="Copiar ruta relativa"]"#)
+        !app.exists(r#".context-menu [data-action="copy-relative"]"#)
             .await
     );
-    app.click(r#".context-menu [data-action="Copiar ruta"]"#)
+    app.click(r#".context-menu [data-action="copy-absolute"]"#)
         .await;
     let root = app.wait_copied().await;
     assert_eq!(
@@ -360,14 +415,14 @@ async fn explorer_copy_paths_and_reveal() {
     );
     assert!(!app.exists(".toast").await, "copiar no dio error");
 
-    // "Mostrar en…" con el nombre del gestor de archivos de cada sistema.
+    // "Abrir en…" con el nombre del gestor de archivos de cada sistema.
     app.right_click(file).await;
     let label = if cfg!(windows) {
-        "Mostrar en el Explorador"
+        "Abrir en el Explorador de archivos"
     } else if cfg!(target_os = "macos") {
-        "Mostrar en Finder"
+        "Abrir en Finder"
     } else {
-        "Abrir carpeta contenedora"
+        "Abrir en el gestor de archivos"
     };
     app.wait_text(r#".context-menu [data-action="reveal"]"#, label)
         .await;

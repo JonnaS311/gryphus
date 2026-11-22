@@ -59,6 +59,14 @@ impl World {
         ProjectSession::open(Path::new(ROOT), self.ports()).unwrap()
     }
 
+    /// La app se reinició: mismos repo y datos, ningún proceso de agente vivo.
+    fn restarted(self) -> Self {
+        Self {
+            agents: FakeAgentRuntime::new(),
+            ..self
+        }
+    }
+
     fn saved(&self) -> gryphus_core::Project {
         self.store
             .load_project(&ProjectId::from_canonical_root(Path::new(ROOT)))
@@ -101,20 +109,135 @@ fn opening_registers_the_main_worktree_and_saves() {
 }
 
 #[test]
-fn reopening_restores_features_and_marks_agents_exited() {
+fn reopening_restores_features_and_relaunches_active_agents() {
     let w = World::new();
     let s = w.open();
     let (f, wt) = new_feature(&s, "login");
     let agent = s.spawn_agent(f, wt, ProviderId::Claude).unwrap();
+    let stopped = s.spawn_agent(f, wt, ProviderId::Claude).unwrap();
+    s.stop_agent(stopped).unwrap();
+    // Sin `close`: como si la app se hubiera caído.
     drop(s);
 
+    let w = w.restarted();
     let reopened = w.open();
     let p = reopened.project();
     assert_eq!(p.features()[0].name().as_str(), "login");
+    assert_eq!(p.agent(agent).unwrap().status(), &AgentStatus::Running);
+    assert!(w.agents.is_alive(agent));
     assert_eq!(
-        p.agent(agent).unwrap().status(),
+        p.agent(stopped).unwrap().status(),
+        &AgentStatus::Exited { code: None },
+        "el que estaba detenido sigue detenido"
+    );
+    assert_eq!(w.agents.spawned().len(), 1);
+}
+
+#[test]
+fn agents_active_at_close_resume_their_claude_conversation() {
+    let w = World::new();
+    let s = w.open();
+    let (f, wt) = new_feature(&s, "login");
+    let agent = s.spawn_agent(f, wt, ProviderId::Claude).unwrap();
+    let args = w.agents.spawned()[0].args.clone();
+    assert_eq!(args[0], "--session-id");
+    let id = args[1].clone();
+    assert_eq!(id.len(), 36, "UUID: {id}");
+    let cwd = s.project().worktree(wt).unwrap().path().to_path_buf();
+    s.close().unwrap();
+
+    // El CLI guardó la conversación: se retoma.
+    let w = w.restarted();
+    w.agents.save_session(ProviderId::Claude, &cwd, &id);
+    let reopened = w.open();
+    assert_eq!(w.agents.spawned()[0].args, ["--resume", id.as_str()]);
+    assert_eq!(
+        reopened.project().agent(agent).unwrap().status(),
+        &AgentStatus::Running
+    );
+    reopened.close().unwrap();
+
+    // Sin conversación guardada (nunca se le escribió) empieza una nueva.
+    let fresh = w.restarted();
+    let _s = fresh.open();
+    let args = &fresh.agents.spawned()[0].args;
+    assert_eq!(args[0], "--session-id");
+    assert_ne!(args[1], id);
+}
+
+#[test]
+fn codex_conversation_is_discovered_and_resumed_on_restart() {
+    let w = World::new();
+    let s = w.open();
+    let (f, wt) = new_feature(&s, "login");
+    let cwd = s.project().worktree(wt).unwrap().path().to_path_buf();
+    let first = s.spawn_agent(f, wt, ProviderId::Codex).unwrap();
+    let second = s.spawn_agent(f, wt, ProviderId::Codex).unwrap();
+    assert!(w.agents.spawned().iter().all(|spec| spec.args.is_empty()));
+    w.agents.save_session(ProviderId::Codex, &cwd, "codex-1");
+    w.agents.save_session(ProviderId::Codex, &cwd, "codex-2");
+
+    // Al terminar cada uno se anota la suya, sin repetir.
+    s.stop_agent(first).unwrap();
+    s.stop_agent(second).unwrap();
+    let id = |a| {
+        s.project()
+            .agent(a)
+            .unwrap()
+            .session()
+            .and_then(|x| x.id.clone())
+    };
+    assert_eq!(id(first).as_deref(), Some("codex-1"));
+    assert_eq!(id(second).as_deref(), Some("codex-2"));
+
+    s.restart_agent(second).unwrap();
+    assert_eq!(w.agents.spawned()[2].args, ["resume", "codex-2"]);
+}
+
+#[test]
+fn opencode_keeps_its_session_id_across_launches() {
+    let w = World::new();
+    let s = w.open();
+    let (f, wt) = new_feature(&s, "login");
+    let agent = s.spawn_agent(f, wt, ProviderId::OpenCode).unwrap();
+    let args = w.agents.spawned()[0].args.clone();
+    assert_eq!(args[0], "--session");
+    assert!(args[1].starts_with("ses_"), "{args:?}");
+    let cwd = s.project().worktree(wt).unwrap().path().to_path_buf();
+    w.agents.save_session(ProviderId::OpenCode, &cwd, &args[1]);
+    s.stop_agent(agent).unwrap();
+    s.restart_agent(agent).unwrap();
+    assert_eq!(w.agents.spawned()[1].args, args);
+}
+
+#[test]
+fn spawning_a_new_agent_never_resumes() {
+    let w = World::new();
+    let s = w.open();
+    let (f, wt) = new_feature(&s, "login");
+    let cwd = s.project().worktree(wt).unwrap().path().to_path_buf();
+    w.agents.save_session(ProviderId::Codex, &cwd, "vieja");
+    s.spawn_agent(f, wt, ProviderId::Codex).unwrap();
+    assert!(w.agents.spawned()[0].args.is_empty());
+}
+
+#[test]
+fn agent_whose_worktree_is_gone_is_not_relaunched() {
+    let w = World::new();
+    let s = w.open();
+    let (f, wt) = new_feature(&s, "login");
+    let agent = s.spawn_agent(f, wt, ProviderId::Claude).unwrap();
+    let path = s.project().worktree(wt).unwrap().path().to_path_buf();
+    s.close().unwrap();
+    w.git.remove_worktree(Path::new(ROOT), &path, true).unwrap();
+
+    let w = w.restarted();
+    let reopened = w.open();
+    assert_eq!(
+        reopened.project().agent(agent).unwrap().status(),
         &AgentStatus::Exited { code: None }
     );
+    assert!(w.agents.spawned().is_empty());
 }
 
 #[test]
@@ -479,7 +602,9 @@ fn spawn_agent_launches_the_configured_command_in_its_worktree() {
     let agent = s.spawn_agent(f, wt, ProviderId::Claude).unwrap();
     let spec = &w.agents.spawned()[0];
     assert_eq!(spec.program, "claude");
-    assert_eq!(spec.args, ["--modelo", "x"]);
+    // Primero la conversación (ver `agents_active_at_close_resume_…`), luego la config.
+    assert_eq!(spec.args[0], "--session-id");
+    assert_eq!(spec.args[2..], ["--modelo", "x"]);
     assert_eq!(spec.cwd, s.project().worktree(wt).unwrap().path());
     assert_eq!(
         s.project().agent(agent).unwrap().status(),
@@ -625,13 +750,12 @@ fn attaching_to_an_agent_without_process_yields_an_ended_stream() {
     let s = w.open();
     let (f, wt) = new_feature(&s, "login");
     let agent = s.spawn_agent(f, wt, ProviderId::Claude).unwrap();
+    // Detenido antes de cerrar: al reabrir no se relanza.
+    s.stop_agent(agent).unwrap();
     s.close().unwrap();
 
     // Nueva sesión con un runtime nuevo: el proceso ya no existe.
-    let w2 = World {
-        agents: FakeAgentRuntime::new(),
-        ..w
-    };
+    let w2 = w.restarted();
     let s2 = w2.open();
     let sink = Arc::new(CollectingChunkSink::default());
     let _sub = s2.attach_agent(agent, sink.clone()).unwrap();
@@ -671,6 +795,35 @@ fn file_operations_use_the_worktree_root() {
         .collect();
     assert_eq!(names, ["src"]);
     assert_eq!(code(s.read_file(main, "../fuera")), "INVALID_PATH");
+}
+
+#[test]
+fn move_files_between_directories() {
+    let w = World::new();
+    let s = w.open();
+    let main = main_wt(&s);
+    s.write_file(main, "a.txt", b"a").unwrap();
+    s.write_file(main, "src/b.rs", b"b").unwrap();
+    s.write_file(main, "docs/a.txt", b"otro").unwrap();
+
+    // A una carpeta y de vuelta a la raíz, conservando el nombre.
+    assert_eq!(
+        s.move_path(main, "src/b.rs", "docs").unwrap().as_str(),
+        "docs/b.rs"
+    );
+    assert_eq!(s.move_path(main, "docs/b.rs", "").unwrap().as_str(), "b.rs");
+    // Una carpeta entera.
+    assert_eq!(
+        s.move_path(main, "src", "docs").unwrap().as_str(),
+        "docs/src"
+    );
+    // Soltar en su propio directorio no hace nada.
+    assert_eq!(s.move_path(main, "a.txt", "").unwrap().as_str(), "a.txt");
+    // Nunca sobrescribe, ni mete una carpeta dentro de sí misma, ni entra en `.git`.
+    assert_eq!(code(s.move_path(main, "a.txt", "docs")), "ALREADY_EXISTS");
+    assert!(s.move_path(main, "docs", "docs/src").is_err());
+    assert_eq!(code(s.move_path(main, "a.txt", ".git")), "INVALID_PATH");
+    assert!(s.read_file(main, "a.txt").is_ok());
 }
 
 #[test]

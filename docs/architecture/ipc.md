@@ -52,6 +52,7 @@ Los tipos viven en **`gryphus-ipc`** (solo `serde`) y los compilan tanto `src-ta
 | `list_dir` / `read_file` | `PathReq { worktree, path }` | `Vec<DirEntryDto>` / `FileContentDto` |
 | `write_file` | `WriteFileReq { worktree, path, content }` | — |
 | `rename_path` | `RenamePathReq { worktree, path, new_name }` (`new_name` es un solo componente; nunca sobrescribe) | ruta nueva |
+| `move_path` | `MovePathReq { worktree, path, to_dir }` (mismo worktree y mismo nombre; nunca sobrescribe ni mete una carpeta en sí misma; en su propio directorio no hace nada) | ruta nueva |
 | `copy_path` | `CopyPathReq { from_worktree, from, to_worktree, to_dir }` (si el nombre existe usa `nombre copia.ext`) | ruta creada |
 | `reveal_path` | `PathReq` (muestra el elemento en Explorador / Finder / gestor de archivos vía D-Bus `FileManager1` o `xdg-open`; `""` abre la raíz) | `()` |
 | `import_paths` | `ImportPathsReq { worktree, sources, to_dir }` (`sources`: rutas absolutas de fuera, soltadas o pegadas desde el sistema; mismos nombres que `copy_path`) | rutas creadas |

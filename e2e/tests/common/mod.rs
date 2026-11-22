@@ -114,6 +114,8 @@ fn free_port() -> u16 {
 pub struct Fixture {
     pub repo: TempRepo,
     pub data: PathBuf,
+    /// Variables de entorno extra para la app (ver [`Self::with_env`]).
+    pub env: Vec<(String, String)>,
 }
 
 impl Fixture {
@@ -127,7 +129,17 @@ impl Fixture {
             .map(|p| format!("[agents.{p}]\ncommand = '{}'\n\n", bin.display()))
             .collect();
         std::fs::write(data.join("config.toml"), config).unwrap();
-        Self { repo, data }
+        Self {
+            repo,
+            data,
+            env: Vec::new(),
+        }
+    }
+
+    /// Lanza la app con `key=value` en su entorno.
+    pub fn with_env(mut self, key: &str, value: &str) -> Self {
+        self.env.push((key.to_owned(), value.to_owned()));
+        self
     }
 
     pub fn root(&self) -> String {
@@ -172,6 +184,7 @@ impl App {
             &native_port.to_string(),
         ])
         .env("GRYPHUS_DATA_DIR", &fixture.data)
+        .envs(fixture.env.iter().map(|(k, v)| (k, v)))
         .kill_on_drop(true);
         // Log de tauri-driver/msedgedriver para diagnosticar fallos de sesión.
         let logs = workspace().join("target").join("e2e-logs");
@@ -300,6 +313,58 @@ impl App {
         self.drag_files("tauri://drag-drop", css, paths).await;
     }
 
+    /// Empieza a arrastrar el primer elemento que cumple `from` y lo lleva, sin
+    /// soltar, sobre el centro de `to` (ver [`Self::release_pointer`]). Emite los
+    /// eventos del puntero que generaría el ratón: `pointerdown` en el origen y
+    /// `pointermove` (con el botón pulsado) sobre lo que haya debajo de cada punto.
+    pub async fn drag_over(&self, from: &str, to: &str) {
+        self.wait_css(from).await;
+        self.wait_css(to).await;
+        self.script(
+            "const center = el => {
+                 const r = el.getBoundingClientRect();
+                 return [r.left + r.width / 2, r.top + r.height / 2];
+             };
+             const opts = (x, y, buttons) => ({
+                 bubbles: true, cancelable: true, composed: true, pointerId: 1,
+                 pointerType: 'mouse', isPrimary: true, button: 0, buttons,
+                 clientX: x, clientY: y });
+             const src = document.querySelector(arguments[0]);
+             const [sx, sy] = center(src);
+             src.dispatchEvent(new PointerEvent('pointerdown', opts(sx, sy, 1)));
+             const [dx, dy] = center(document.querySelector(arguments[1]));
+             for (const [x, y] of [[sx + 20, sy + 20], [dx, dy]]) {
+                 const under = document.elementFromPoint(x, y) || document.body;
+                 under.dispatchEvent(new PointerEvent('pointermove', opts(x, y, 1)));
+             }
+             window.__e2ePointer = [dx, dy];
+             return null;",
+            vec![json!(from), json!(to)],
+        )
+        .await;
+    }
+
+    /// Suelta el botón donde dejó el puntero [`Self::drag_over`].
+    pub async fn release_pointer(&self) {
+        self.script(
+            "const [x, y] = window.__e2ePointer;
+             const under = document.elementFromPoint(x, y) || document.body;
+             under.dispatchEvent(new PointerEvent('pointerup', {
+                 bubbles: true, cancelable: true, composed: true, pointerId: 1,
+                 pointerType: 'mouse', isPrimary: true, button: 0, buttons: 0,
+                 clientX: x, clientY: y }));
+             return null;",
+            vec![],
+        )
+        .await;
+    }
+
+    /// Arrastra `from` y lo suelta sobre `to`.
+    pub async fn drag_and_drop(&self, from: &str, to: &str) {
+        self.drag_over(from, to).await;
+        self.release_pointer().await;
+    }
+
     /// Dispara `paste` en el campo de entrada de la terminal, con `text` como
     /// contenido del portapapeles (o sin texto, como al copiar archivos).
     pub async fn paste_in_terminal(&self, text: Option<&str>) {
@@ -313,6 +378,35 @@ impl App {
             vec![json!(text)],
         )
         .await;
+    }
+
+    /// Registra los comandos `agent_input` que la UI manda al backend (y los sigue
+    /// mandando). Leerlos con [`Self::agent_inputs`].
+    pub async fn record_agent_input(&self) {
+        self.script(
+            // `__TAURI__.core` y `__TAURI_INTERNALS__` están congelados: se observa
+            // la petición IPC, que Tauri hace con `fetch` (`…/agent_input`, cuerpo JSON).
+            "window.__agentInputs = [];
+             const original = window.fetch;
+             window.fetch = function (input, init) {
+                 try {
+                     const url = typeof input === 'string' ? input : input.url;
+                     if (/\\/agent_input$/.test(new URL(url).pathname) && init && typeof init.body === 'string') {
+                         window.__agentInputs.push(JSON.parse(init.body).req.data);
+                     }
+                 } catch {}
+                 return original.apply(this, arguments);
+             };
+             return null;",
+            vec![],
+        )
+        .await;
+    }
+
+    /// Lo que la UI escribió en los agentes desde [`Self::record_agent_input`].
+    pub async fn agent_inputs(&self) -> Vec<String> {
+        let value = self.script("return window.__agentInputs;", vec![]).await;
+        serde_json::from_value(value).unwrap_or_default()
     }
 
     /// Elige `value` en un `<select>` como lo haría el usuario (dispara `change`).
