@@ -86,6 +86,7 @@ pub fn run() {
             commands::open_project,
             commands::get_project,
             commands::close_project,
+            commands::restore_last_project,
             commands::create_feature,
             commands::delete_feature,
             commands::spawn_agent,

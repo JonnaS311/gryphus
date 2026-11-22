@@ -500,6 +500,15 @@ impl Store {
         });
     }
 
+    /// Arranque: reabre el último proyecto (si lo hay) y luego carga el estado.
+    /// La bienvenida no se muestra hasta saberlo (`loaded` sigue en `false`).
+    pub fn restore_and_load(self) {
+        spawn_local(async move {
+            let _ = ipc::restore_last_project().await;
+            self.refresh_project();
+        });
+    }
+
     /// Diálogo nativo de carpeta y luego [`Self::open_project`].
     pub fn pick_and_open(self) {
         spawn_local(async move {

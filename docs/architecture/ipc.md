@@ -38,7 +38,8 @@ Los tipos viven en **`gryphus-ipc`** (solo `serde`) y los compilan tanto `src-ta
 | `pick_folder` | — | `Option<String>` (diálogo nativo) |
 | `open_project` | `OpenProjectReq { path }` | `OpenProjectRes { other_window }` |
 | `get_project` | — | `Option<ProjectDto>` (`None` = pantalla de bienvenida) |
-| `close_project` | — | — (detiene los agentes, guarda y deja la ventana en la bienvenida; idempotente) |
+| `close_project` | — | — (detiene los agentes, guarda y deja la ventana en la bienvenida; idempotente; olvida el último proyecto) |
+| `restore_last_project` | — | `bool` (al arrancar reabre en `main` el último proyecto abierto, guardado en `<data_dir>/last_project.txt`; una vez por proceso) |
 | `create_feature` | `CreateFeatureReq { name, worktree: New{base} \| Existing{id} }` | id de la feature |
 | `delete_feature` | `DeleteFeatureReq { feature, remove_worktrees, force }` | — |
 | `spawn_agent` | `SpawnAgentReq { feature, worktree, provider }` | id del agente |

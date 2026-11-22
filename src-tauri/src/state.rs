@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use gryphus_agents::PtyRuntime;
@@ -53,11 +54,56 @@ pub struct AppState {
     pub git: Arc<CliGit>,
     pub fs: Arc<LocalFs>,
     pub store: Arc<JsonStore>,
+    pub last_project: LastProject,
+}
+
+/// Raíz del último proyecto abierto, para reabrirlo al arrancar.
+/// Vive en `<data_dir>/last_project.txt` (nunca dentro del repositorio).
+pub struct LastProject {
+    file: PathBuf,
+    /// La restauración solo ocurre una vez por proceso (no al recargar la página).
+    restored: AtomicBool,
+}
+
+impl LastProject {
+    pub fn new(data_dir: &Path) -> Self {
+        Self {
+            file: data_dir.join("last_project.txt"),
+            restored: AtomicBool::new(false),
+        }
+    }
+
+    pub fn get(&self) -> Option<PathBuf> {
+        let text = std::fs::read_to_string(&self.file).ok()?;
+        let path = text.trim();
+        (!path.is_empty()).then(|| PathBuf::from(path))
+    }
+
+    /// Fallar al recordarlo no debe impedir abrir el proyecto.
+    pub fn remember(&self, root: &Path) {
+        if let Some(dir) = self.file.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&self.file, root.to_string_lossy().as_bytes());
+    }
+
+    /// Lo olvida solo si sigue siendo `root` (otra ventana pudo abrir otro después).
+    pub fn forget(&self, root: &Path) {
+        if self.get().as_deref() == Some(root) {
+            let _ = std::fs::remove_file(&self.file);
+        }
+    }
+
+    /// `true` la primera vez que se llama.
+    pub fn take_restore(&self) -> bool {
+        !self.restored.swap(true, Ordering::SeqCst)
+    }
 }
 
 impl AppState {
     pub fn new(data_dir: &Path, config_file: PathBuf) -> Self {
         Self {
+            last_project: LastProject::new(data_dir),
             registry: Mutex::new(Registry::default()),
             attachments: Mutex::new(HashMap::new()),
             close_guards: Mutex::new(HashSet::new()),
@@ -132,6 +178,28 @@ mod tests {
             events: Arc::new(RecordingEventSink::default()),
         };
         ProjectSession::open(Path::new(root), ports).unwrap()
+    }
+
+    #[test]
+    fn last_project_is_remembered_forgotten_and_restored_once() {
+        let dir = std::env::temp_dir().join(format!("gryphus-last-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let last = LastProject::new(&dir);
+        assert_eq!(last.get(), None);
+
+        last.remember(Path::new("/repos/a"));
+        last.remember(Path::new("/repos/b"));
+        assert_eq!(last.get().as_deref(), Some(Path::new("/repos/b")));
+
+        // Cerrar otro proyecto no borra el último.
+        last.forget(Path::new("/repos/a"));
+        assert_eq!(last.get().as_deref(), Some(Path::new("/repos/b")));
+        last.forget(Path::new("/repos/b"));
+        assert_eq!(last.get(), None);
+
+        assert!(last.take_restore());
+        assert!(!last.take_restore());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

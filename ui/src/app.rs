@@ -28,7 +28,7 @@ pub fn App() -> impl IntoView {
         }
         let _ = crate::bridge::glue::ensure_loaded().await;
     });
-    store.refresh_project();
+    store.restore_and_load();
     register_events(store);
 
     // Guarda de cierre: con agentes activos o cambios sin guardar, la X de la

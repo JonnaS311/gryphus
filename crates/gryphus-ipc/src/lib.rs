@@ -19,6 +19,9 @@ pub mod cmd {
     pub const GET_PROJECT: &str = "get_project";
     /// Cierra el proyecto de la ventana (detiene sus agentes y guarda); la ventana vuelve a la bienvenida.
     pub const CLOSE_PROJECT: &str = "close_project";
+    /// Al arrancar, reabre en la ventana principal el último proyecto abierto.
+    /// Devuelve `true` si lo abrió; solo actúa una vez por proceso.
+    pub const RESTORE_LAST_PROJECT: &str = "restore_last_project";
     pub const CREATE_FEATURE: &str = "create_feature";
     pub const DELETE_FEATURE: &str = "delete_feature";
     pub const SPAWN_AGENT: &str = "spawn_agent";
@@ -430,6 +433,7 @@ mod tests {
             cmd::OPEN_PROJECT,
             cmd::GET_PROJECT,
             cmd::CLOSE_PROJECT,
+            cmd::RESTORE_LAST_PROJECT,
             cmd::CREATE_FEATURE,
             cmd::DELETE_FEATURE,
             cmd::SPAWN_AGENT,
