@@ -133,13 +133,24 @@ impl ProjectSession {
             WorktreeChoice::Existing(id) => id,
             WorktreeChoice::New { base } => {
                 let path = inner.config.worktree_path(&inner.root, &name);
+                let branch = BranchName::for_feature(&name);
+                // Un worktree borrado a mano deja su registro en git y su branch:
+                // se limpia el registro y, si la branch quedó libre, se reutiliza
+                // (p. ej. al recrear una feature cuyo worktree ya no existe).
+                inner.ports.git.prune_worktrees(&inner.root)?;
+                let reuse_branch = inner
+                    .ports
+                    .git
+                    .list_branches(&inner.root)?
+                    .iter()
+                    .any(|b| !b.is_remote && b.name == branch && !b.checked_out);
                 let info = inner.ports.git.add_worktree(
                     &inner.root,
                     &NewWorktree {
                         path,
-                        branch: BranchName::for_feature(&name),
-                        create_branch: true,
-                        base,
+                        branch,
+                        create_branch: !reuse_branch,
+                        base: if reuse_branch { None } else { base },
                     },
                 )?;
                 created = Some(info.path.clone());
@@ -185,7 +196,14 @@ impl ProjectSession {
         force: bool,
     ) -> AppResult<()> {
         let inner = &self.inner;
-        // Valida contra una copia antes de tocar git.
+        // Valida antes de tocar git: un worktree borrado a mano no es un error.
+        lock(&inner.project).feature(feature)?;
+        if remove_worktrees {
+            // Olvida en git los worktrees cuyo directorio ya no existe y los marca
+            // como ausentes aquí, para no intentar consultarlos ni borrarlos.
+            inner.ports.git.prune_worktrees(&inner.root)?;
+            inner.refresh_worktrees()?;
+        }
         let (owned, to_remove): (Vec<WorktreeId>, Vec<(WorktreeId, PathBuf)>) = {
             let p = lock(&inner.project);
             let mut probe = p.clone();

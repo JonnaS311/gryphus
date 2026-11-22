@@ -28,6 +28,8 @@ pub trait GitHarness {
     fn commit_all(&self, worktree: &Path, message: &str);
     /// Crea una branch en el HEAD de `main` sin hacer checkout.
     fn create_branch(&self, name: &str);
+    /// Borra el directorio de un worktree a mano, sin pasar por git.
+    fn delete_worktree_dir(&self, worktree: &Path);
 }
 
 fn branch(name: &str) -> BranchName {
@@ -237,6 +239,32 @@ pub fn refuses_to_remove_dirty_worktree_without_force<H: GitHarness>(h: &H) {
     );
     h.port().remove_worktree(&h.root(), &wt, true).unwrap();
     assert_eq!(h.port().list_worktrees(&h.root()).unwrap().len(), 1);
+}
+
+pub fn manually_deleted_worktree_is_not_listed<H: GitHarness>(h: &H) {
+    let wt = add_feature_worktree(h, "x");
+    h.delete_worktree_dir(&wt);
+    let worktrees = h.port().list_worktrees(&h.root()).unwrap();
+    assert_eq!(worktrees.len(), 1, "{worktrees:?}");
+    assert!(worktrees[0].is_main);
+}
+
+pub fn prune_frees_the_branch_of_a_manually_deleted_worktree<H: GitHarness>(h: &H) {
+    let wt = add_feature_worktree(h, "x");
+    h.delete_worktree_dir(&wt);
+    h.port().prune_worktrees(&h.root()).unwrap();
+    let branches = h.port().list_branches(&h.root()).unwrap();
+    let kept = branches
+        .iter()
+        .find(|b| b.name == branch("feat/x"))
+        .expect("la branch se conserva");
+    assert!(!kept.checked_out);
+    // La branch se puede volver a usar, incluso en la misma ruta.
+    let info = h
+        .port()
+        .add_worktree(&h.root(), &request(wt.clone(), "feat/x", false, None))
+        .unwrap();
+    assert!(same_path(&info.path, &wt));
 }
 
 pub fn unknown_worktree_is_not_found<H: GitHarness>(h: &H) {

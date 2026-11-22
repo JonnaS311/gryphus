@@ -29,6 +29,8 @@ struct Wt {
     /// Contenido del directorio de trabajo.
     files: Tree,
     is_main: bool,
+    /// Su directorio se borró a mano: git aún lo tiene registrado (`prunable`).
+    vanished: bool,
 }
 
 struct State {
@@ -62,6 +64,7 @@ impl FakeGit {
                     head: 0,
                     files: Tree::new(),
                     is_main: true,
+                    vanished: false,
                 }],
             }),
             fail: FailSwitch::default(),
@@ -112,6 +115,14 @@ impl FakeGit {
         let head = s.worktrees[0].head;
         s.branches.insert(branch(name), head);
     }
+
+    /// Simula que el usuario borra a mano el directorio de un worktree.
+    pub fn delete_worktree_dir(&self, worktree: &Path) {
+        let mut s = lock(&self.state);
+        let wt = s.wt_mut(worktree).expect("worktree desconocido");
+        wt.vanished = true;
+        wt.files.clear();
+    }
 }
 
 fn branch(name: &str) -> BranchName {
@@ -148,8 +159,16 @@ impl State {
         }
     }
 
+    /// Un worktree cuyo directorio ya no existe no admite status/diff.
     fn wt(&self, path: &Path) -> PortResult<&Wt> {
-        self.wt_index(path).map(|i| &self.worktrees[i])
+        let wt = &self.worktrees[self.wt_index(path)?];
+        if wt.vanished {
+            return err(
+                PortErrorKind::NotFound,
+                format!("no existe: {}", path.display()),
+            );
+        }
+        Ok(wt)
     }
 
     fn wt_mut(&mut self, path: &Path) -> PortResult<&mut Wt> {
@@ -216,7 +235,19 @@ impl GitPort for FakeGit {
         self.fail.check()?;
         let s = lock(&self.state);
         s.check_root(root)?;
-        Ok(s.worktrees.iter().map(|w| s.info(w)).collect())
+        Ok(s.worktrees
+            .iter()
+            .filter(|w| !w.vanished)
+            .map(|w| s.info(w))
+            .collect())
+    }
+
+    fn prune_worktrees(&self, root: &Path) -> PortResult<()> {
+        self.fail.check()?;
+        let mut s = lock(&self.state);
+        s.check_root(root)?;
+        s.worktrees.retain(|w| !w.vanished);
+        Ok(())
     }
 
     fn add_worktree(&self, root: &Path, req: &NewWorktree) -> PortResult<WorktreeInfo> {
@@ -278,6 +309,7 @@ impl GitPort for FakeGit {
             head,
             files,
             is_main: false,
+            vanished: false,
         });
         Ok(s.info(s.worktrees.last().expect("recién añadido")))
     }
@@ -288,6 +320,12 @@ impl GitPort for FakeGit {
         s.check_root(root)?;
         let idx = s.wt_index(worktree)?;
         let wt = &s.worktrees[idx];
+        if wt.vanished {
+            return err(
+                PortErrorKind::NotFound,
+                format!("no existe: {}", worktree.display()),
+            );
+        }
         if wt.is_main {
             return err(
                 PortErrorKind::InvalidInput,

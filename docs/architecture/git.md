@@ -11,6 +11,7 @@ Implementa `GitPort` con `CliGit`, que ejecuta el binario `git` (decisión y med
 | Diff | `diff --no-renames -U3 <base> --` + `ls-files --others --exclude-standard -z` (los archivos sin seguimiento se añaden como "todo añadido"; binarios o > 1 MiB se marcan `binary`) |
 | Merge-base | `merge-base HEAD <branch>` |
 | Crear/eliminar worktree | `worktree add [-b]` / `worktree remove [--force]` |
+| Olvidar worktrees borrados a mano | `worktree prune` (en `list` se omiten los `prunable`) |
 
 Detalles del adaptador:
 - Todas las invocaciones usan `-c core.quotepath=false -c color.ui=false`, `LC_ALL=C` (para clasificar los errores por su texto en inglés) y `GIT_TERMINAL_PROMPT=0`. En Windows se lanzan sin ventana de consola.
@@ -19,14 +20,14 @@ Detalles del adaptador:
 - Una `base` que empiece por `-` se rechaza (evita inyectar opciones).
 - Los parsers son funciones puras con pruebas sobre salidas fijas, incluidas rutas con comillas C, espacios y no-ASCII.
 
-`CliGit` pasa **los 16 casos del contrato** contra repos reales (ver [testing.md](../testing.md#pruebas-de-contrato)) y 10 casos propios. Benchmark: `cargo bench -p gryphus-git`.
+`CliGit` pasa **los 18 casos del contrato** contra repos reales (ver [testing.md](../testing.md#pruebas-de-contrato)) y 10 casos propios. Benchmark: `cargo bench -p gryphus-git`.
 
 ## Worktrees y features
 
-- **Crear feature con worktree nuevo:** `git worktree add <ruta> -b <branch> <base>`.
+- **Crear feature con worktree nuevo:** `git worktree add <ruta> -b <branch> <base>`. Antes se hace `git worktree prune`; si `feat/<nombre>` ya existe y no está en ningún worktree (p. ej. se borró el suyo a mano), se reutiliza con `git worktree add <ruta> <branch>` en vez de fallar con `ALREADY_EXISTS`.
   - Ruta por defecto: `<padre-del-repo>/<nombre-repo>.worktrees/<feature>` (fuera del repo para que no aparezca en el árbol ni en `git status`). Configurable.
 - **Adjuntar worktree existente:** se elige uno de `git worktree list` que no pertenezca a otra feature.
-- **Eliminar feature:** opcionalmente elimina sus worktrees (`git worktree remove`); si hay cambios sin commit, la UI exige confirmación y se usa `--force` solo con ella. La branch nunca se borra automáticamente.
+- **Eliminar feature:** opcionalmente elimina sus worktrees (`git worktree remove`); si hay cambios sin commit, la UI exige confirmación y se usa `--force` solo con ella. La branch nunca se borra automáticamente. Los worktrees cuyo directorio ya no existe se olvidan (`prune`) sin error.
 - **Worktrees externos:** si alguien crea o borra worktrees fuera de Gryphus, el watcher sobre `.git/worktrees` publica `GitChanged` y el panel se reconcilia (los worktrees desaparecidos se marcan como "faltante" en vez de romper la feature).
 
 ## Información git visible

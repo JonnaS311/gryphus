@@ -93,6 +93,7 @@ pub trait GitPort: Send + Sync {
     fn repo_info(&self, root: &Path) -> PortResult<RepoInfo>;
     fn list_branches(&self, root: &Path) -> PortResult<Vec<Branch>>;
     fn list_worktrees(&self, root: &Path) -> PortResult<Vec<WorktreeInfo>>;
+    fn prune_worktrees(&self, root: &Path) -> PortResult<()>;
     fn add_worktree(&self, root: &Path, req: &NewWorktree) -> PortResult<WorktreeInfo>;
     fn remove_worktree(&self, root: &Path, worktree: &Path, force: bool) -> PortResult<()>;
     fn status(&self, worktree: &Path) -> PortResult<Vec<FileStatus>>;
