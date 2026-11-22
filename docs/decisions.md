@@ -81,3 +81,4 @@ Formato corto: decisión, motivo, alternativa descartada. Una decisión nueva o 
 ### ADR-014 — E2E solo en Windows y Linux
 - **Decisión:** la suite e2e corre en CI en Windows y Linux.
 - **Motivo:** `tauri-driver` no soporta WKWebView en macOS. En macOS se cubre con pruebas unitarias, de integración y de componentes.
+- **Estado:** el job de CI está desactivado temporalmente porque falla en los runners ([#6](https://github.com/JonnaS311/gryphus/issues/6)); la suite se ejecuta en local.
