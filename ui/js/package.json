@@ -25,7 +25,7 @@
     "codemirror": "^6.0.1"
   },
   "devDependencies": {
-    "esbuild": "^0.25.0",
+    "esbuild": "^0.28.2",
     "material-icon-theme": "^5.40.0"
   }
 }
