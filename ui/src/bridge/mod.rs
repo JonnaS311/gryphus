@@ -4,7 +4,8 @@
 //! - [`xterm`] y [`editor`]: envoltorios de `window.GryphusJs` (ui/js).
 //! - [`dialog`]: confirmaciones nativas del navegador.
 //! - [`icons`]: tablas de Material Icon Theme; [`prefs`]: localStorage y variables CSS.
-//! - [`dom`]: desplazamiento a elementos (lista de archivos del diff).
+//! - [`dom`]: desplazamiento a elementos (lista de archivos del diff) y
+//!   modificador de los atajos (⌘ en macOS, Ctrl en el resto).
 
 pub mod dialog;
 pub mod dom;

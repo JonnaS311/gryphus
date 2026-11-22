@@ -38,7 +38,8 @@ Los tipos viven en **`gryphus-ipc`** (solo `serde`) y los compilan tanto `src-ta
 | `pick_folder` | — | `Option<String>` (diálogo nativo) |
 | `open_project` | `OpenProjectReq { path }` | `OpenProjectRes { other_window }` |
 | `get_project` | — | `Option<ProjectDto>` (`None` = pantalla de bienvenida) |
-| `close_project` | — | — (detiene los agentes, guarda y deja la ventana en la bienvenida; idempotente) |
+| `close_project` | — | — (detiene los agentes, guarda y deja la ventana en la bienvenida; idempotente; olvida el último proyecto) |
+| `restore_last_project` | — | `bool` (al arrancar reabre en `main` el último proyecto abierto, guardado en `<data_dir>/last_project.txt`; una vez por proceso) |
 | `create_feature` | `CreateFeatureReq { name, worktree: New{base} \| Existing{id} }` | id de la feature |
 | `delete_feature` | `DeleteFeatureReq { feature, remove_worktrees, force }` | — |
 | `spawn_agent` | `SpawnAgentReq { feature, worktree, provider }` | id del agente |
@@ -52,6 +53,9 @@ Los tipos viven en **`gryphus-ipc`** (solo `serde`) y los compilan tanto `src-ta
 | `write_file` | `WriteFileReq { worktree, path, content }` | — |
 | `rename_path` | `RenamePathReq { worktree, path, new_name }` (`new_name` es un solo componente; nunca sobrescribe) | ruta nueva |
 | `copy_path` | `CopyPathReq { from_worktree, from, to_worktree, to_dir }` (si el nombre existe usa `nombre copia.ext`) | ruta creada |
+| `import_paths` | `ImportPathsReq { worktree, sources, to_dir }` (`sources`: rutas absolutas de fuera, soltadas o pegadas desde el sistema; mismos nombres que `copy_path`) | rutas creadas |
+| `clipboard_files` | — | archivos del portapapeles del sistema (rutas absolutas; vacío si no hay) |
+| `clipboard_copy_path` | `PathReq` | `()` (pone el archivo en el portapapeles del sistema) |
 | `git_status` | `WorktreeReq { worktree }` | `Vec<FileStatusDto>` |
 | `git_diff` | `DiffReq { worktree, base: Option<branch> }` | `DiffDto` (`None` = sin commit; `Some` = desde el merge-base) |
 | `git_overview` | — | `GitOverviewDto { head, branches }` |
@@ -81,6 +85,7 @@ Se emiten con `emit_to(etiqueta)`, **solo a la ventana del proyecto**. Son notif
 |---|---|---|
 | `feature:changed` / `feature:removed` | `FeatureEvent { feature }` | refrescar el proyecto |
 | `agent:status` | `AgentStatusEvent { agent, status }` | actualizar el indicador |
+| `agent:idle` | `AgentEvent { agent }` | avisar en su feature que terminó y espera instrucciones |
 | `fs:changed` | `FilesChangedEvent { worktree, paths }` | refrescar el explorador y el archivo abierto |
 | `git:changed` | `WorktreeEvent { worktree }` | volver a pedir status/diff si está visible |
 | `worktrees:changed` | `()` | refrescar el proyecto |

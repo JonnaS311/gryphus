@@ -1,7 +1,7 @@
 //! Estado global de la ventana (señales). Es caché de lo que devuelve el backend
 //! más estado puro de UI; la fuente de verdad está en Rust.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use futures_channel::oneshot;
 
@@ -11,7 +11,9 @@ use leptos::task::spawn_local;
 
 use crate::bridge::prefs;
 use crate::ipc;
-use crate::layout::CenterView;
+use crate::layout::{
+    CenterLayout, CenterView, DropTarget, Pane, Panes, CENTER_STORAGE_KEY, PANES_STORAGE_KEY,
+};
 use crate::logic;
 use crate::settings::{Settings, STORAGE_KEY};
 
@@ -44,6 +46,8 @@ pub enum SaveAnswer {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MenuTarget {
     Agent(u64),
+    /// Cabecera de una feature (elegir su color).
+    Feature(u64),
     /// Archivo o directorio del explorador.
     Entry {
         worktree: u64,
@@ -75,6 +79,19 @@ pub enum RenameTarget {
 pub struct Clipboard {
     pub worktree: u64,
     pub path: String,
+    /// También quedó en el portapapeles del sistema (que entonces manda al pegar).
+    pub in_system: bool,
+}
+
+/// Dónde caerían los archivos que se arrastran desde fuera (resaltado).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FileDrop {
+    Terminal,
+    /// Directorio del explorador (`""` = raíz).
+    Explorer {
+        worktree: u64,
+        dir: String,
+    },
 }
 
 /// Confirmación pendiente (modal `app::ConfirmDialog`): "Cancelar" más una o
@@ -94,7 +111,12 @@ pub struct Store {
     pub selected_agent: RwSignal<Option<u64>>,
     /// Worktree que siguen el explorador, el diff y la barra de estado.
     pub active_worktree: RwSignal<Option<u64>>,
+    /// Vista central con el foco (la última elegida o tocada). Para cambiarla usar
+    /// [`Store::show_view`], que además la hace visible en su columna.
     pub view: RwSignal<CenterView>,
+    /// Reparto de las vistas centrales en columnas (`localStorage`). Para saber si
+    /// una vista se ve, `center.with(|c| c.is_visible(v))`, no `view`.
+    pub center: RwSignal<CenterLayout>,
     /// Pestaña activa del editor. Asignarla abre el archivo en una pestaña si no lo estaba.
     pub open_file: RwSignal<Option<OpenFile>>,
     /// Pestañas abiertas del editor, en orden.
@@ -115,6 +137,12 @@ pub struct Store {
     pub icons_ready: RwSignal<bool>,
     pub settings: RwSignal<Settings>,
     pub settings_open: RwSignal<bool>,
+    /// Lado y ancho de los paneles Features y Explorador (`localStorage`).
+    pub panes: RwSignal<Panes>,
+    /// Color elegido a mano por feature (id → tono de `logic::FEATURE_HUES`), del
+    /// proyecto `colors_project`. Es preferencia de la UI: va en `localStorage`.
+    pub feature_colors: RwSignal<HashMap<u64, u16>>,
+    colors_project: StoredValue<Option<String>>,
     /// Número de la última petición de `get_project`: una respuesta más antigua que
     /// llega tarde no debe pisar el estado nuevo.
     project_req: StoredValue<u64>,
@@ -123,6 +151,14 @@ pub struct Store {
     pub menu: RwSignal<Option<ContextMenu>>,
     pub renaming: RwSignal<Option<RenameTarget>>,
     pub clipboard: RwSignal<Option<Clipboard>>,
+    /// Agentes que terminaron su tarea y aún no se han revisado (su feature parpadea).
+    pub attention: RwSignal<HashSet<u64>>,
+    /// Última fila del explorador pulsada: (worktree, ruta, ¿es carpeta?). Es el
+    /// origen de Ctrl+C y el destino de Ctrl+V en el explorador.
+    pub explorer_selected: RwSignal<Option<(u64, String, bool)>>,
+    pub drop_target: RwSignal<Option<FileDrop>>,
+    /// Texto que la terminal del agente debe pegar (rutas soltadas o pegadas).
+    pub terminal_paste: RwSignal<Option<String>>,
 }
 
 impl Store {
@@ -135,6 +171,7 @@ impl Store {
             selected_agent: RwSignal::new(None),
             active_worktree: RwSignal::new(None),
             view: RwSignal::new(CenterView::Agent),
+            center: RwSignal::new(CenterLayout::default()),
             open_file: RwSignal::new(None),
             open_files: RwSignal::new(Vec::new()),
             dirty_files: RwSignal::new(HashSet::new()),
@@ -148,12 +185,68 @@ impl Store {
             icons_ready: RwSignal::new(false),
             settings: RwSignal::new(Settings::default()),
             settings_open: RwSignal::new(false),
+            panes: RwSignal::new(Panes::default()),
+            feature_colors: RwSignal::new(HashMap::new()),
+            colors_project: StoredValue::new(None),
             project_req: StoredValue::new(0),
             collapsed: RwSignal::new(HashSet::new()),
             menu: RwSignal::new(None),
             renaming: RwSignal::new(None),
             clipboard: RwSignal::new(None),
+            attention: RwSignal::new(HashSet::new()),
+            explorer_selected: RwSignal::new(None),
+            drop_target: RwSignal::new(None),
+            terminal_paste: RwSignal::new(None),
         }
+    }
+
+    /// Un agente terminó su tarea. Si el usuario ya lo está mirando no hace falta avisar.
+    pub fn agent_idle(&self, agent: u64) {
+        let watching = self.selected_agent.get_untracked() == Some(agent)
+            && self
+                .center
+                .with_untracked(|c| c.is_visible(CenterView::Agent))
+            && crate::bridge::dom::has_focus();
+        if !watching {
+            self.attention.update(|set| {
+                set.insert(agent);
+            });
+        }
+    }
+
+    /// El usuario revisó el agente: deja de avisar.
+    pub fn agent_seen(&self, agent: u64) {
+        if self.attention.with_untracked(|set| set.contains(&agent)) {
+            self.attention.update(|set| {
+                set.remove(&agent);
+            });
+        }
+    }
+
+    /// La ventana recuperó el foco: el agente visible cuenta como revisado.
+    pub fn window_focused(&self) {
+        if self
+            .center
+            .with_untracked(|c| c.is_visible(CenterView::Agent))
+        {
+            if let Some(agent) = self.selected_agent.get_untracked() {
+                self.agent_seen(agent);
+            }
+        }
+    }
+
+    /// Primer agente de la feature pendiente de revisar.
+    pub fn pending_agent_of(&self, feature: u64) -> Option<(u64, u64)> {
+        self.attention.with(|set| {
+            self.project.with(|p| {
+                p.as_ref().and_then(|p| {
+                    logic::agents_of(p, feature)
+                        .into_iter()
+                        .find(|a| set.contains(&a.id))
+                        .map(|a| (a.id, a.worktree))
+                })
+            })
+        })
     }
 
     pub fn is_collapsed(&self, feature: u64) -> bool {
@@ -247,23 +340,97 @@ impl Store {
         self.bump_git();
     }
 
-    /// Pega el portapapeles dentro de `dir` y deja visible la copia.
+    /// Copia un archivo o carpeta del explorador: al portapapeles de Gryphus y, si se
+    /// puede, al del sistema (para pegarlo en la terminal de un agente o fuera).
+    pub fn copy_entry(self, worktree: u64, path: String) {
+        self.clipboard.set(Some(Clipboard {
+            worktree,
+            path: path.clone(),
+            in_system: false,
+        }));
+        spawn_local(async move {
+            if ipc::clipboard_copy_path(worktree, path.clone())
+                .await
+                .is_ok()
+            {
+                self.clipboard.update(|c| {
+                    if let Some(c) = c
+                        .as_mut()
+                        .filter(|c| c.worktree == worktree && c.path == path)
+                    {
+                        c.in_system = true;
+                    }
+                });
+            }
+        });
+    }
+
+    /// Pega dentro de `dir` lo copiado y deja visible la copia. Manda el portapapeles
+    /// del sistema (archivos copiados en el explorador de Windows, Finder…, o con
+    /// "Copiar" aquí); si no tiene archivos, el de Gryphus.
     pub fn paste(self, worktree: u64, dir: String) {
-        let Some(clip) = self.clipboard.get_untracked() else {
+        let clip = self.clipboard.get_untracked();
+        spawn_local(async move {
+            // Si "Copiar" no llegó al sistema, lo que haya allí es más antiguo.
+            let system = match &clip {
+                Some(c) if !c.in_system => Vec::new(),
+                _ => ipc::clipboard_files().await.unwrap_or_default(),
+            };
+            let result = if !system.is_empty() {
+                ipc::import_paths(worktree, system, dir.clone())
+                    .await
+                    .map(|_| ())
+            } else if let Some(c) = clip {
+                ipc::copy_path(c.worktree, c.path, worktree, dir.clone())
+                    .await
+                    .map(|_| ())
+            } else {
+                return;
+            };
+            self.after_paste(worktree, dir, result);
+        });
+    }
+
+    /// Copia archivos de fuera (soltados en el explorador) dentro de `dir`.
+    pub fn import(self, worktree: u64, dir: String, sources: Vec<String>) {
+        if sources.is_empty() {
+            return;
+        }
+        spawn_local(async move {
+            let result = ipc::import_paths(worktree, sources, dir.clone())
+                .await
+                .map(|_| ());
+            self.after_paste(worktree, dir, result);
+        });
+    }
+
+    fn after_paste(&self, worktree: u64, dir: String, result: Result<(), IpcError>) {
+        // Aun con error puede haberse copiado algo: se refresca igual.
+        if result.is_ok() && !dir.is_empty() {
+            self.expanded.update(|set| {
+                set.insert((worktree, dir));
+            });
+        }
+        self.fs_tick.update(|t| *t += 1);
+        self.bump_git();
+        if let Err(e) = result {
+            self.report(e);
+        }
+    }
+
+    /// Pega en la terminal del agente lo que hay en el portapapeles del sistema cuando
+    /// no es texto: las rutas de los archivos copiados o, si no hay archivos (p. ej.
+    /// una captura de pantalla), un Ctrl+V para que el agente lea el portapapeles.
+    pub fn paste_non_text_into_agent(self) {
+        let Some(agent) = self.selected_agent.get_untracked() else {
             return;
         };
         spawn_local(async move {
-            match ipc::copy_path(clip.worktree, clip.path, worktree, dir.clone()).await {
-                Ok(_) => {
-                    if !dir.is_empty() {
-                        self.expanded.update(|set| {
-                            set.insert((worktree, dir));
-                        });
-                    }
-                    self.fs_tick.update(|t| *t += 1);
-                    self.bump_git();
-                }
-                Err(e) => self.report(e),
+            let files = ipc::clipboard_files().await.unwrap_or_default();
+            if files.is_empty() {
+                let _ = ipc::agent_input(agent, "\u{16}".into()).await;
+            } else {
+                self.terminal_paste.set(Some(logic::terminal_paths(&files)));
             }
         });
     }
@@ -315,6 +482,97 @@ impl Store {
             .unwrap_or_default();
         prefs::apply_css_vars(s.css_vars());
         self.settings.set(s);
+        if let Some(t) = prefs::load(PANES_STORAGE_KEY) {
+            self.panes.set(Panes::parse(&t));
+        }
+        if let Some(t) = prefs::load(CENTER_STORAGE_KEY) {
+            let center = CenterLayout::parse(&t);
+            self.view.set(center.columns[0].active);
+            self.center.set(center);
+        }
+    }
+
+    /// Da el foco a la vista y la hace visible en su columna.
+    pub fn show_view(&self, view: CenterView) {
+        if !self.center.with_untracked(|c| c.is_visible(view)) {
+            self.center.update(|c| c.activate(view));
+            self.save_center();
+        }
+        self.view.set(view);
+    }
+
+    /// Mueve una pestaña central (arrastrar y soltar) y le da el foco.
+    pub fn move_view(&self, view: CenterView, drop: DropTarget) {
+        self.center.update(|c| c.move_view(view, drop));
+        self.save_center();
+        self.view.set(view);
+    }
+
+    fn save_center(&self) {
+        prefs::save(
+            CENTER_STORAGE_KEY,
+            &self.center.with_untracked(CenterLayout::serialize),
+        );
+    }
+
+    /// Guarda el lado y ancho actuales de los paneles.
+    pub fn save_panes(&self) {
+        prefs::save(PANES_STORAGE_KEY, &self.panes.get_untracked().serialize());
+    }
+
+    fn colors_key(project: &str) -> String {
+        format!("gryphus.feature-colors.{project}")
+    }
+
+    /// Carga los colores elegidos del proyecto abierto (solo si cambió de proyecto).
+    fn load_feature_colors(&self, project: Option<String>) {
+        if self.colors_project.with_value(|p| *p == project) {
+            return;
+        }
+        let colors = project
+            .as_deref()
+            .and_then(|id| prefs::load(&Self::colors_key(id)))
+            .map(|t| logic::parse_feature_colors(&t))
+            .unwrap_or_default();
+        self.colors_project.set_value(project);
+        self.feature_colors.set(colors);
+    }
+
+    /// Fija el color de una feature (`None` = el automático por posición) y lo recuerda.
+    pub fn set_feature_color(&self, feature: u64, hue: Option<u16>) {
+        let Some(project) = self.colors_project.get_value() else {
+            return;
+        };
+        self.feature_colors
+            .update(|c| match hue.filter(|h| logic::is_feature_hue(*h)) {
+                Some(h) => {
+                    c.insert(feature, h);
+                }
+                None => {
+                    c.remove(&feature);
+                }
+            });
+        // Sin las features que ya no existen, para no heredar el color si se reusa el id.
+        let live: HashSet<u64> = self.project.with_untracked(|p| {
+            p.iter()
+                .flat_map(|p| p.features.iter().map(|f| f.id))
+                .collect()
+        });
+        let text = self.feature_colors.with_untracked(|c| {
+            let kept = c
+                .iter()
+                .filter(|(id, _)| live.contains(id))
+                .map(|(id, h)| (*id, *h))
+                .collect();
+            logic::serialize_feature_colors(&kept)
+        });
+        prefs::save(&Self::colors_key(&project), &text);
+    }
+
+    /// Cambia el panel de lado (izquierda ⇄ derecha) y lo recuerda.
+    pub fn toggle_pane_side(&self, pane: Pane) {
+        self.panes.update(|p| p.toggle_side(pane));
+        self.save_panes();
     }
 
     /// Aplica y guarda nuevas preferencias.
@@ -335,6 +593,15 @@ impl Store {
                 Ok(_) => {}
                 Err(e) => self.report(e),
             }
+        });
+    }
+
+    /// Arranque: reabre el último proyecto (si lo hay) y luego carga el estado.
+    /// La bienvenida no se muestra hasta saberlo (`loaded` sigue en `false`).
+    pub fn restore_and_load(self) {
+        spawn_local(async move {
+            let _ = ipc::restore_last_project().await;
+            self.refresh_project();
         });
     }
 
@@ -364,7 +631,7 @@ impl Store {
             self.status.set(Vec::new());
             self.overview.set(None);
             self.expanded.set(HashSet::new());
-            self.view.set(CenterView::Agent);
+            self.show_view(CenterView::Agent);
             self.refresh_project();
         });
     }
@@ -422,6 +689,7 @@ impl Store {
             }
             match res {
                 Ok(project) => {
+                    self.load_feature_colors(project.as_ref().map(|p| p.id.clone()));
                     self.project.set(project);
                     self.loaded.set(true);
                     self.fix_selection();
@@ -461,9 +729,10 @@ impl Store {
     }
 
     pub fn select_agent(&self, agent: u64, worktree: u64, feature: u64) {
+        self.agent_seen(agent);
         self.selected_agent.set(Some(agent));
         self.selected_feature.set(Some(feature));
         self.active_worktree.set(Some(worktree));
-        self.view.set(CenterView::Agent);
+        self.show_view(CenterView::Agent);
     }
 }

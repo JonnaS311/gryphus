@@ -50,7 +50,7 @@ jobs:
           echo "id=$id" >> "$GITHUB_OUTPUT"
 
   build:
-    name: build (${{ matrix.platform }})
+    name: build (${{ matrix.platform }} ${{ matrix.target }})
     needs: create
     strategy:
       fail-fast: false
@@ -59,6 +59,14 @@ jobs:
           # 22.04: glibc más antigua = AppImage/.deb compatibles con más distros
           - platform: ubuntu-22.04
           - platform: windows-latest
+          # macOS: un .dmg por arquitectura (Apple Silicon e Intel), desde el
+          # runner arm64. Firma ad-hoc (signingIdentity "-" en tauri.conf.json).
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            args: --target aarch64-apple-darwin
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+            args: --target x86_64-apple-darwin
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v7
@@ -70,7 +78,12 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf
 
       - run: rustup show
+      - name: Target de compilación (macOS)
+        if: matrix.target != ''
+        run: rustup target add ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
       - uses: taiki-e/install-action@v2
         with:
           tool: trunk,tauri-cli
@@ -82,6 +95,7 @@ jobs:
           releaseId: ${{ needs.create.outputs.id }}
           tauriScript: cargo tauri
           projectPath: src-tauri
+          args: ${{ matrix.args }}
 
   publish:
     name: publicar release

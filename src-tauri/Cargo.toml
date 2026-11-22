@@ -27,6 +27,7 @@ tauri-build = { workspace = true }
 [dependencies]
 tauri = { workspace = true }
 tauri-plugin-dialog = { workspace = true }
+arboard = { workspace = true }
 gryphus-core = { workspace = true }
 gryphus-app = { workspace = true }
 gryphus-ipc = { workspace = true }
@@ -37,6 +38,7 @@ gryphus-store = { workspace = true }
 
 [dev-dependencies]
 gryphus-testkit = { workspace = true }
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

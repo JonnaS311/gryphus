@@ -15,5 +15,5 @@ Estado: ✅ hecho · ⏳ siguiente
 | 6 ✅ | Casos de uso | `ProjectSession` (features, agentes, archivos, git, vigilancia) | Unitarias con fakes de cada flujo |
 | 7 ✅ | IPC | DTOs en `gryphus-ipc`, comandos, Channels, eventos, `WindowRegistry` | Pruebas de comandos con `tauri::test`; mapeos dominio ⇄ DTO |
 | 8 ✅ | UI | Bridge (Tauri, xterm, CodeMirror), tres paneles, terminal, editor, diff, barra de estado | `cargo test` de `logic.rs` + e2e (sustituye a `wasm-bindgen-test`) |
-| 9 ✅ | E2E | Los 9 flujos de [testing.md](testing.md#flujos-obligatorios) en Rust (`fantoccini`) | Pasan localmente en Windows; jobs de CI configurados (sin ejecutar aún) |
+| 9 ✅ | E2E | Los 9 flujos de [testing.md](testing.md#flujos-obligatorios) en Rust (`fantoccini`) | Pasan localmente en Windows; en CI corren como informativos (Windows: no abre la sesión WebDriver; Linux: fallan 7 de 9, ver [#6](https://github.com/JonnaS311/gryphus/issues/6)) |
 | 10 ✅ | Rendimiento | Medir contra los presupuestos de [overview.md](architecture/overview.md#presupuestos-de-rendimiento-objetivos-medibles) | Benchmarks con línea base en CI |

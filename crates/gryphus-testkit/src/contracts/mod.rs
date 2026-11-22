@@ -82,6 +82,8 @@ macro_rules! git_contract {
             diff_against_merge_base_only_includes_feature_work,
             removes_clean_worktree_but_keeps_branch,
             refuses_to_remove_dirty_worktree_without_force,
+            manually_deleted_worktree_is_not_listed,
+            prune_frees_the_branch_of_a_manually_deleted_worktree,
             unknown_worktree_is_not_found,
         );
     };

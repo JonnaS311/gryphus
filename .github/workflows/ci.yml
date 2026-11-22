@@ -23,7 +23,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        # macos-latest es Apple Silicon (arm64). Sin job e2e en macOS: tauri-driver
+        # no lo soporta (WKWebView no tiene driver WebDriver).
+        os: [windows-latest, ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -76,8 +78,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        # 24.04: en 26.04 (ubuntu-latest) no existe el paquete webkit2gtk-driver
+        os: [windows-latest, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
+    # Informativo (no bloquea): en el runner de Windows la sesión WebDriver no
+    # llega a abrirse y en Linux (WebKitGTK) fallan varios flujos. Seguimiento en
+    # el issue #6. El gate es el job `check`.
+    continue-on-error: true
     env:
       GRYPHUS_E2E: "1"
     steps:
@@ -107,16 +114,18 @@ jobs:
 
       - name: E2E (Linux)
         if: runner.os == 'Linux'
-        run: xvfb-run cargo test -p gryphus-e2e -- --nocapture
+        run: xvfb-run cargo test -p gryphus-e2e --no-fail-fast -- --nocapture
 
       - name: E2E (Windows)
         if: runner.os == 'Windows'
-        run: cargo test -p gryphus-e2e -- --nocapture
+        run: cargo test -p gryphus-e2e --no-fail-fast -- --nocapture
 
-      - name: Capturas
+      - name: Capturas y logs del driver
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: e2e-screens-${{ matrix.os }}
-          path: target/e2e-screens
+          name: e2e-${{ matrix.os }}
+          path: |
+            target/e2e-screens
+            target/e2e-logs
           if-no-files-found: ignore

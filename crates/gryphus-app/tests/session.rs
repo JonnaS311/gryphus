@@ -13,7 +13,8 @@ use gryphus_core::{
     WorktreeId,
 };
 use gryphus_testkit::{
-    CollectingChunkSink, FakeAgentRuntime, FakeFs, FakeGit, FakeStore, RecordingEventSink,
+    wait_until, CollectingChunkSink, FakeAgentRuntime, FakeFs, FakeGit, FakeStore,
+    RecordingEventSink,
 };
 
 const ROOT: &str = "/repo";
@@ -367,6 +368,65 @@ fn deleting_a_feature_forgets_its_already_missing_worktrees() {
 }
 
 #[test]
+fn deleting_a_feature_whose_worktree_was_deleted_by_hand_just_works() {
+    let w = World::new();
+    let s = w.open();
+    let (f, wt) = new_feature(&s, "login");
+    let path = s.project().worktree(wt).unwrap().path().to_path_buf();
+    // Sin refrescar: la sesión aún cree que el worktree existe.
+    w.git.delete_worktree_dir(&path);
+
+    s.delete_feature(f, true, false).unwrap();
+    assert!(s.project().feature(f).is_err());
+    assert!(s.project().worktree(wt).is_err(), "olvidado");
+    assert!(w.events.events().contains(&DomainEvent::FeatureRemoved(f)));
+    assert_eq!(w.saved(), s.project());
+}
+
+#[test]
+fn recreating_a_feature_whose_worktree_was_deleted_by_hand_reuses_its_branch() {
+    let w = World::new();
+    let s = w.open();
+    let (f, wt) = new_feature(&s, "login");
+    let path = s.project().worktree(wt).unwrap().path().to_path_buf();
+    w.git.write_file(&path, "trabajo.txt", "x\n");
+    w.git.commit_all(&path, "trabajo");
+    s.delete_feature(f, false, false).unwrap();
+    w.git.delete_worktree_dir(&path);
+
+    let (_, wt) = new_feature(&s, "login");
+    let p = s.project();
+    let worktree = p.worktree(wt).unwrap();
+    assert_eq!(worktree.branch().unwrap().as_str(), "feat/login");
+    assert_eq!(worktree.path(), path);
+    assert_eq!(
+        w.git.status(&path).unwrap(),
+        [],
+        "conserva el trabajo de la branch"
+    );
+    assert!(w
+        .git
+        .diff(
+            &path,
+            &DiffBase::MergeBase(BranchName::parse("main").unwrap())
+        )
+        .unwrap()
+        .files
+        .iter()
+        .any(|f| f.path.as_str() == "trabajo.txt"));
+}
+
+#[test]
+fn a_branch_in_use_by_a_live_worktree_is_still_rejected() {
+    let w = World::new();
+    let s = w.open();
+    let (f, _) = new_feature(&s, "login");
+    s.delete_feature(f, false, false).unwrap();
+    let r = s.create_feature("login", WorktreeChoice::New { base: None });
+    assert_eq!(code(r), "ALREADY_EXISTS");
+}
+
+#[test]
 fn writing_inside_dot_git_is_rejected() {
     let w = World::new();
     let s = w.open();
@@ -522,6 +582,44 @@ fn input_and_output_flow_through_the_session() {
 }
 
 #[test]
+fn agent_that_goes_quiet_after_an_order_is_reported_idle_once() {
+    let w = World::new();
+    let s = w.open();
+    let (f, wt) = new_feature(&s, "login");
+    let agent = s.spawn_agent(f, wt, ProviderId::Claude).unwrap();
+    let idle = || {
+        w.events
+            .events()
+            .iter()
+            .filter(|e| **e == DomainEvent::AgentIdle { agent })
+            .count()
+    };
+
+    // Salida sin orden previa (arranque, tecleo) no cuenta.
+    s.agent_input(agent, b"tecleando").unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    assert_eq!(idle(), 0);
+
+    s.agent_input(agent, b"hola\r").unwrap();
+    assert!(wait_until(std::time::Duration::from_secs(8), || idle() == 1));
+    std::thread::sleep(std::time::Duration::from_secs(1));
+    assert_eq!(idle(), 1, "se avisa una sola vez por orden");
+}
+
+#[test]
+fn terminal_bell_reports_the_agent_idle_at_once() {
+    let w = World::new();
+    let s = w.open();
+    let (f, wt) = new_feature(&s, "login");
+    let agent = s.spawn_agent(f, wt, ProviderId::Claude).unwrap();
+    s.agent_input(agent, b"\x07\r").unwrap();
+    assert!(w
+        .events
+        .events()
+        .contains(&DomainEvent::AgentIdle { agent }));
+}
+
+#[test]
 fn attaching_to_an_agent_without_process_yields_an_ended_stream() {
     let w = World::new();
     let s = w.open();
@@ -615,6 +713,37 @@ fn rename_and_paste_files() {
         s.read_file(main, "c copia.txt").unwrap(),
         FileContent::Text("a".into())
     );
+}
+
+#[test]
+fn importing_requires_absolute_paths() {
+    let w = World::new();
+    let s = w.open();
+    let main = main_wt(&s);
+    let rel = [std::path::PathBuf::from("a.txt")];
+    assert_eq!(code(s.import_paths(main, &rel, "")), "INVALID_PATH");
+    assert_eq!(code(s.import_paths(main, &[], "../x")), "INVALID_PATH");
+    assert!(s.import_paths(main, &[], "").unwrap().is_empty());
+}
+
+/// Las rutas de `FakeFs` (`/repo/…`) solo son absolutas fuera de Windows.
+#[cfg(unix)]
+#[test]
+fn importing_uses_copy_names() {
+    let w = World::new();
+    let s = w.open();
+    let main = main_wt(&s);
+    s.write_file(main, "a.txt", b"a").unwrap();
+    s.write_file(main, "src/b.rs", b"b").unwrap();
+    let sources = [
+        std::path::PathBuf::from(ROOT).join("a.txt"),
+        std::path::PathBuf::from(ROOT).join("a.txt"),
+    ];
+    let created = s.import_paths(main, &sources, "").unwrap();
+    let created: Vec<_> = created.iter().map(|p| p.as_str()).collect();
+    assert_eq!(created, ["a copia.txt", "a copia 2.txt"]);
+    let into_src = s.import_paths(main, &sources[..1], "src").unwrap();
+    assert_eq!(into_src[0].as_str(), "src/a.txt");
 }
 
 #[test]

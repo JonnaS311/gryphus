@@ -93,6 +93,11 @@ impl GitPort for CliGit {
         Ok(parse::worktrees(&out))
     }
 
+    fn prune_worktrees(&self, root: &Path) -> PortResult<()> {
+        self.write(root, ["worktree", "prune"])?;
+        Ok(())
+    }
+
     fn add_worktree(&self, root: &Path, req: &NewWorktree) -> PortResult<WorktreeInfo> {
         if req
             .base

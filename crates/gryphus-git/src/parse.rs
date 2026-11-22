@@ -21,6 +21,8 @@ pub(crate) fn nul_fields(bytes: &[u8]) -> Vec<String> {
 pub(crate) fn worktrees(bytes: &[u8]) -> Vec<WorktreeInfo> {
     let mut out = Vec::new();
     let mut current: Option<WorktreeInfo> = None;
+    // `bare` y `prunable` (directorio borrado a mano) no se listan. El principal
+    // va primero y nunca es `prunable`.
     let mut bare = false;
     let finish = |wt: Option<WorktreeInfo>, bare: bool, out: &mut Vec<WorktreeInfo>| {
         if let Some(mut wt) = wt.filter(|_| !bare) {
@@ -57,7 +59,7 @@ pub(crate) fn worktrees(bytes: &[u8]) -> Vec<WorktreeInfo> {
                     .and_then(|b| BranchName::parse(b).ok());
             }
             ("locked", Some(wt)) => wt.locked = true,
-            ("bare", Some(_)) => bare = true,
+            ("bare" | "prunable", Some(_)) => bare = true,
             _ => {}
         }
     }
@@ -360,9 +362,10 @@ mod tests {
     fn parses_worktree_list() {
         let out = b"worktree /r\0HEAD aaa\0branch refs/heads/main\0\0\
                     worktree /wt/x\0HEAD bbb\0detached\0locked razon\0\0\
+                    worktree /borrado\0HEAD ccc\0branch refs/heads/feat/y\0prunable gitdir file points to non-existent location\0\0\
                     worktree /bare\0bare\0\0";
         let wts = worktrees(out);
-        assert_eq!(wts.len(), 2, "el bare se omite");
+        assert_eq!(wts.len(), 2, "el bare y el prunable se omiten");
         assert_eq!(wts[0].path, PathBuf::from("/r"));
         assert!(wts[0].is_main);
         assert_eq!(wts[0].branch, Some(BranchName::parse("main").unwrap()));

@@ -124,10 +124,12 @@ pub async fn open_project(
     .await?;
 
     // Un proyecto vive en una sola ventana: si ya está abierto, se enfoca.
-    if let Some(label) = state.registry().label_for_root(&root) {
+    let existing_label = state.registry().label_for_root(&root);
+    if let Some(label) = existing_label {
         if let Some(existing) = app.get_webview_window(&label) {
             let _ = existing.set_focus();
         }
+        state.last_project.remember(&root);
         return Ok(OpenProjectRes {
             other_window: label != window.label(),
         });
@@ -197,9 +199,40 @@ pub async fn open_project(
         let _ = session.close();
         return Err(internal(e));
     }
+    state.last_project.remember(&root);
     Ok(OpenProjectRes {
         other_window: !reuse_current,
     })
+}
+
+/// Reabre el último proyecto en la ventana principal, una sola vez por proceso.
+/// Si ya no se puede abrir (repo borrado o movido) se olvida en silencio y la
+/// ventana queda en la bienvenida.
+#[tauri::command]
+pub async fn restore_last_project(
+    app: AppHandle,
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+) -> CmdResult<bool> {
+    if window.label() != "main"
+        || state.registry().session(window.label()).is_some()
+        || !state.last_project.take_restore()
+    {
+        return Ok(false);
+    }
+    let Some(root) = state.last_project.get() else {
+        return Ok(false);
+    };
+    let req = OpenProjectReq {
+        path: root.to_string_lossy().into_owned(),
+    };
+    match open_project(app, window, state.clone(), req).await {
+        Ok(res) => Ok(!res.other_window),
+        Err(_) => {
+            state.last_project.forget(&root);
+            Ok(false)
+        }
+    }
 }
 
 /// `None` si la ventana aún no tiene proyecto (pantalla de bienvenida).
@@ -225,7 +258,12 @@ pub async fn close_project(window: WebviewWindow, state: State<'_, AppState>) ->
     let _ = window.set_title("Gryphus");
     match session {
         None => Ok(()),
-        Some(s) => blocking(move || s.close().map_err(dto::error)).await,
+        Some(s) => {
+            // Cerrarlo a mano significa no querer verlo al arrancar (cerrar la
+            // ventana o la app no pasa por aquí y sí lo conserva).
+            state.last_project.forget(s.root());
+            blocking(move || s.close().map_err(dto::error)).await
+        }
     }
 }
 
@@ -472,6 +510,63 @@ pub async fn copy_path(
         )
         .map(String::from)
         .map_err(dto::error)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn import_paths(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    req: ImportPathsReq,
+) -> CmdResult<Vec<String>> {
+    with_session(&state, &window, move |s| {
+        let sources: Vec<PathBuf> = req.sources.iter().map(PathBuf::from).collect();
+        s.import_paths(WorktreeId::from_raw(req.worktree), &sources, &req.to_dir)
+            .map(|v| v.into_iter().map(String::from).collect())
+            .map_err(dto::error)
+    })
+    .await
+}
+
+// ── Portapapeles del sistema ─────────────────────────────────────────────────
+
+/// Archivos copiados en el sistema (p. ej. Ctrl+C en el explorador de Windows).
+/// Sin archivos, o sin portapapeles disponible, devuelve una lista vacía.
+#[tauri::command]
+pub async fn clipboard_files(app: AppHandle) -> CmdResult<Vec<String>> {
+    blocking(move || {
+        let files = app
+            .state::<AppState>()
+            .with_clipboard(|c| c.get().file_list())
+            .unwrap_or_default();
+        Ok(files
+            .into_iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect())
+    })
+    .await
+}
+
+/// Pone un archivo o carpeta del worktree en el portapapeles del sistema, para
+/// pegarlo en la terminal de un agente, en el explorador o fuera de Gryphus.
+#[tauri::command]
+pub async fn clipboard_copy_path(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    req: PathReq,
+) -> CmdResult<()> {
+    let app = window.app_handle().clone();
+    with_session(&state, &window, move |s| {
+        let path = s
+            .absolute_path(WorktreeId::from_raw(req.worktree), &req.path)
+            .map_err(dto::error)?;
+        app.state::<AppState>()
+            .with_clipboard(|c| c.set().file_list(&[path]))
+            .map_err(|e| IpcError {
+                code: "CLIPBOARD".into(),
+                message: format!("no se pudo usar el portapapeles del sistema: {e}"),
+            })
     })
     .await
 }

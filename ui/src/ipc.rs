@@ -27,6 +27,10 @@ pub async fn close_project() -> IpcResult<()> {
     call(cmd::CLOSE_PROJECT).await
 }
 
+pub async fn restore_last_project() -> IpcResult<bool> {
+    call(cmd::RESTORE_LAST_PROJECT).await
+}
+
 pub async fn create_feature(name: String, worktree: WorktreeChoiceDto) -> IpcResult<u64> {
     invoke(
         cmd::CREATE_FEATURE,
@@ -145,6 +149,32 @@ pub async fn copy_path(
         }),
     )
     .await
+}
+
+/// Copia rutas absolutas de fuera dentro de `to_dir`; devuelve las rutas creadas.
+pub async fn import_paths(
+    worktree: u64,
+    sources: Vec<String>,
+    to_dir: String,
+) -> IpcResult<Vec<String>> {
+    invoke(
+        cmd::IMPORT_PATHS,
+        Some(&ImportPathsReq {
+            worktree,
+            sources,
+            to_dir,
+        }),
+    )
+    .await
+}
+
+/// Archivos del portapapeles del sistema (vacío si no hay).
+pub async fn clipboard_files() -> IpcResult<Vec<String>> {
+    call(cmd::CLIPBOARD_FILES).await
+}
+
+pub async fn clipboard_copy_path(worktree: u64, path: String) -> IpcResult<()> {
+    invoke(cmd::CLIPBOARD_COPY_PATH, Some(&PathReq { worktree, path })).await
 }
 
 pub async fn git_status(worktree: u64) -> IpcResult<Vec<FileStatusDto>> {

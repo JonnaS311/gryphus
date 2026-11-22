@@ -1,5 +1,7 @@
 //! Reglas de presentación puras (sin Leptos ni JS): se prueban con `cargo test`.
 
+use std::collections::HashMap;
+
 use gryphus_ipc::{
     AgentDto, AgentStatusDto, BranchDto, FeatureDto, FileDiffDto, FileStateDto, FileStatusDto,
     LineKindDto, ProjectDto, WorktreeDto,
@@ -89,10 +91,44 @@ pub fn rename_selection(name: &str, is_file: bool) -> u32 {
     end.encode_utf16().count() as u32
 }
 
+/// Paleta de tonos (HSL) de las features: (tono, nombre). Es también la lista
+/// limitada del selector de color del menú contextual.
+pub const FEATURE_HUES: [(u16, &str); 8] = [
+    (210, "Azul"),
+    (140, "Verde"),
+    (30, "Naranja"),
+    (280, "Violeta"),
+    (350, "Rojo"),
+    (180, "Turquesa"),
+    (55, "Amarillo"),
+    (250, "Índigo"),
+];
+
 /// Tono (HSL) de una feature según su posición: las contiguas nunca se repiten.
 pub fn feature_hue(index: usize) -> u16 {
-    const HUES: [u16; 8] = [210, 140, 30, 280, 350, 180, 55, 250];
-    HUES[index % HUES.len()]
+    FEATURE_HUES[index % FEATURE_HUES.len()].0
+}
+
+pub fn is_feature_hue(hue: u16) -> bool {
+    FEATURE_HUES.iter().any(|(h, _)| *h == hue)
+}
+
+/// Colores elegidos a mano (`id=tono` por línea). Ignora líneas inválidas y tonos
+/// fuera de la paleta.
+pub fn parse_feature_colors(text: &str) -> HashMap<u64, u16> {
+    text.lines()
+        .filter_map(|l| {
+            let (id, hue) = l.split_once('=')?;
+            let hue = hue.trim().parse().ok().filter(|h| is_feature_hue(*h))?;
+            Some((id.trim().parse().ok()?, hue))
+        })
+        .collect()
+}
+
+pub fn serialize_feature_colors(colors: &HashMap<u64, u16>) -> String {
+    let mut lines: Vec<_> = colors.iter().map(|(id, h)| format!("{id}={h}\n")).collect();
+    lines.sort();
+    lines.concat()
 }
 
 pub fn file_mark(statuses: &[FileStatusDto], path: &str) -> Option<FileStateDto> {
@@ -139,6 +175,33 @@ pub fn tab_hint<'a>(paths: impl IntoIterator<Item = &'a str>, path: &str) -> Opt
             dir.to_owned()
         }
     })
+}
+
+/// Rutas soltadas o pegadas en la terminal de un agente, listas para escribirse
+/// como argumentos (como VS Code): separadas por espacios y entre comillas si
+/// hace falta. Las rutas de Windows (`C:\…`, `\\servidor\…`) usan comillas dobles
+/// (no pueden contener `"`); las demás, comillas simples al estilo POSIX.
+/// Termina en espacio para seguir escribiendo.
+pub fn terminal_paths(paths: &[String]) -> String {
+    fn is_windows(p: &str) -> bool {
+        let b = p.as_bytes();
+        p.starts_with(r"\\") || (b.len() > 2 && b[0].is_ascii_alphabetic() && b[1] == b':')
+    }
+    fn quote(p: &str) -> String {
+        let plain = |c: char| c.is_ascii_alphanumeric() || "/\\:._-+@%,=~".contains(c);
+        if !p.is_empty() && p.chars().all(plain) {
+            p.to_owned()
+        } else if is_windows(p) {
+            format!("\"{p}\"")
+        } else {
+            format!("'{}'", p.replace('\'', r"'\''"))
+        }
+    }
+    let mut out = paths.iter().map(|p| quote(p)).collect::<Vec<_>>().join(" ");
+    if !out.is_empty() {
+        out.push(' ');
+    }
+    out
 }
 
 /// `↑2 ↓1`, o vacío si está al día o no tiene upstream.
@@ -258,6 +321,18 @@ mod tests {
     }
 
     #[test]
+    fn feature_colors_round_trip_and_stay_in_the_palette() {
+        let colors = HashMap::from([(3, 140), (12, 350)]);
+        assert_eq!(
+            parse_feature_colors(&serialize_feature_colors(&colors)),
+            colors
+        );
+        // Tono fuera de la paleta, id inválido y basura: se ignoran.
+        let parsed = parse_feature_colors("1=999\nx=140\nbasura\n 7 = 55 \n");
+        assert_eq!(parsed, HashMap::from([(7, 55)]));
+    }
+
+    #[test]
     fn diff_counts_added_and_removed() {
         let line = |kind| DiffLineDto {
             kind,
@@ -315,5 +390,27 @@ mod tests {
         assert_eq!(tab_hint(tabs, "ui/src/main.rs").as_deref(), Some("ui/src"));
         assert_eq!(tab_hint(tabs, "main.rs").as_deref(), Some("./"));
         assert_eq!(tab_hint(tabs, "Cargo.toml"), None);
+    }
+
+    #[test]
+    fn terminal_paths_are_quoted_only_when_needed() {
+        let v = |p: &[&str]| p.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        assert_eq!(terminal_paths(&[]), "");
+        assert_eq!(
+            terminal_paths(&v(&[r"C:\repo\img.png", "/tmp/a.txt"])),
+            r"C:\repo\img.png /tmp/a.txt "
+        );
+        assert_eq!(
+            terminal_paths(&v(&[r"C:\Mis documentos\a b.png"])),
+            r#""C:\Mis documentos\a b.png" "#
+        );
+        assert_eq!(
+            terminal_paths(&v(&[r"\\srv\share\x y"])),
+            r#""\\srv\share\x y" "#
+        );
+        assert_eq!(
+            terminal_paths(&v(&["/home/a/it's here.md"])),
+            r"'/home/a/it'\''s here.md' "
+        );
     }
 }

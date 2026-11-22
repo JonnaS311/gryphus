@@ -10,7 +10,7 @@ use crate::ipc;
 use crate::layout::CenterView;
 use crate::logic;
 use crate::panels::InlineRename;
-use crate::store::{MenuTarget, OpenFile, RenameTarget, Store};
+use crate::store::{FileDrop, MenuTarget, OpenFile, RenameTarget, Store};
 
 #[component]
 pub fn Explorer() -> impl IntoView {
@@ -25,9 +25,49 @@ pub fn Explorer() -> impl IntoView {
         })
     };
 
+    // Ctrl+C / Ctrl+V (⌘ en macOS) con el foco en el explorador (tras pulsar una fila).
+    let on_keydown = move |ev: leptos::ev::KeyboardEvent| {
+        if !crate::bridge::dom::primary_mod(&ev) || ev.alt_key() || ev.shift_key() {
+            return;
+        }
+        let Some(worktree) = store.active_worktree.get_untracked() else {
+            return;
+        };
+        let selected = store
+            .explorer_selected
+            .get_untracked()
+            .filter(|(wt, _, _)| *wt == worktree);
+        match ev.key().to_lowercase().as_str() {
+            "c" => {
+                if let Some((_, path, _)) = selected {
+                    ev.prevent_default();
+                    store.copy_entry(worktree, path);
+                }
+            }
+            "v" => {
+                ev.prevent_default();
+                let dir = match selected {
+                    Some((_, path, true)) => path,
+                    Some((_, path, false)) => logic::parent_dir(&path).to_owned(),
+                    None => String::new(),
+                };
+                store.paste(worktree, dir);
+            }
+            _ => {}
+        }
+    };
+    let root_drop = move || {
+        store
+            .drop_target
+            .with(|t| matches!(t, Some(FileDrop::Explorer { dir, .. }) if dir.is_empty()))
+    };
+
     view! {
         <aside
             class="pane pane-right"
+            class:drop-target=root_drop
+            tabindex="-1"
+            on:keydown=on_keydown
             on:contextmenu=move |ev| {
                 if let Some(worktree) = store.active_worktree.get_untracked() {
                     store.open_menu(&ev, MenuTarget::ExplorerRoot { worktree });
@@ -163,14 +203,24 @@ fn TreeEntry(worktree: u64, entry: DirEntryDto, parent: String, depth: usize) ->
             let toggle_key = full.clone();
             let changed_path = full.clone();
             let changed = move || store.status.with(|s| logic::dir_changed(s, &changed_path));
+            let drop_path = full.clone();
+            let is_drop = move || {
+                store.drop_target.with(|t| {
+                    matches!(t, Some(FileDrop::Explorer { worktree: w, dir }) if *w == worktree && *dir == drop_path)
+                })
+            };
             view! {
                 <li>
                     <div
                         class="tree-row dir"
                         class:ignored=entry.ignored
+                        class:drop-target=is_drop
                         style:padding-left=padding
                         data-path=full.clone()
-                        on:click=move |_| store.toggle_expanded(worktree, &toggle_key)
+                        on:click=move |_| {
+                            store.explorer_selected.set(Some((worktree, toggle_key.clone(), true)));
+                            store.toggle_expanded(worktree, &toggle_key)
+                        }
                         on:contextmenu=on_menu
                     >
                         <span class="chev">{move || if chev_open() { "▾" } else { "▸" }}</span>
@@ -224,6 +274,9 @@ fn TreeEntry(worktree: u64, entry: DirEntryDto, parent: String, depth: usize) ->
                         on:contextmenu=on_menu
                         on:click=move |_| {
                             store
+                                .explorer_selected
+                                .set(Some((worktree, open_path.clone(), false)));
+                            store
                                 .open_file
                                 .set(
                                     Some(OpenFile {
@@ -231,7 +284,7 @@ fn TreeEntry(worktree: u64, entry: DirEntryDto, parent: String, depth: usize) ->
                                         path: open_path.clone(),
                                     }),
                                 );
-                            store.view.set(CenterView::Editor);
+                            store.show_view(CenterView::Editor);
                         }
                     >
                         <span class="chev"></span>

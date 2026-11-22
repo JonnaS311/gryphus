@@ -7,6 +7,7 @@
 
 mod app;
 mod bridge;
+mod dnd;
 mod icons;
 mod ipc;
 mod layout;

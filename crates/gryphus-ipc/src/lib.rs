@@ -19,6 +19,9 @@ pub mod cmd {
     pub const GET_PROJECT: &str = "get_project";
     /// Cierra el proyecto de la ventana (detiene sus agentes y guarda); la ventana vuelve a la bienvenida.
     pub const CLOSE_PROJECT: &str = "close_project";
+    /// Al arrancar, reabre en la ventana principal el último proyecto abierto.
+    /// Devuelve `true` si lo abrió; solo actúa una vez por proceso.
+    pub const RESTORE_LAST_PROJECT: &str = "restore_last_project";
     pub const CREATE_FEATURE: &str = "create_feature";
     pub const DELETE_FEATURE: &str = "delete_feature";
     pub const SPAWN_AGENT: &str = "spawn_agent";
@@ -37,6 +40,13 @@ pub mod cmd {
     pub const RENAME_PATH: &str = "rename_path";
     /// Pega una copia; devuelve la ruta creada.
     pub const COPY_PATH: &str = "copy_path";
+    /// Copia rutas absolutas de fuera (soltar o pegar desde el sistema). Req:
+    /// [`super::ImportPathsReq`]; devuelve las rutas creadas.
+    pub const IMPORT_PATHS: &str = "import_paths";
+    /// Archivos del portapapeles del sistema (rutas absolutas; vacío si no hay).
+    pub const CLIPBOARD_FILES: &str = "clipboard_files";
+    /// Pone un archivo del worktree en el portapapeles del sistema. Req: [`super::PathReq`].
+    pub const CLIPBOARD_COPY_PATH: &str = "clipboard_copy_path";
     pub const GIT_STATUS: &str = "git_status";
     pub const GIT_DIFF: &str = "git_diff";
     pub const GIT_OVERVIEW: &str = "git_overview";
@@ -58,6 +68,8 @@ pub mod event {
     pub const FEATURE_REMOVED: &str = "feature:removed";
     /// Payload: [`super::AgentStatusEvent`]
     pub const AGENT_STATUS: &str = "agent:status";
+    /// El agente terminó su tarea y espera instrucciones. Payload: [super::AgentEvent]
+    pub const AGENT_IDLE: &str = "agent:idle";
     /// Payload: [`super::FilesChangedEvent`]
     pub const FILES_CHANGED: &str = "fs:changed";
     /// Payload: [`super::WorktreeEvent`]
@@ -234,6 +246,15 @@ pub struct CopyPathReq {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImportPathsReq {
+    pub worktree: u64,
+    /// Rutas absolutas del sistema.
+    pub sources: Vec<String>,
+    /// Directorio destino; "" es la raíz.
+    pub to_dir: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WriteFileReq {
     pub worktree: u64,
     pub path: String,
@@ -382,6 +403,11 @@ pub struct AgentStatusEvent {
     pub status: AgentStatusDto,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentEvent {
+    pub agent: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FilesChangedEvent {
     pub worktree: u64,
@@ -423,6 +449,7 @@ mod tests {
             cmd::OPEN_PROJECT,
             cmd::GET_PROJECT,
             cmd::CLOSE_PROJECT,
+            cmd::RESTORE_LAST_PROJECT,
             cmd::CREATE_FEATURE,
             cmd::DELETE_FEATURE,
             cmd::SPAWN_AGENT,
@@ -439,6 +466,9 @@ mod tests {
             cmd::WRITE_FILE,
             cmd::RENAME_PATH,
             cmd::COPY_PATH,
+            cmd::IMPORT_PATHS,
+            cmd::CLIPBOARD_FILES,
+            cmd::CLIPBOARD_COPY_PATH,
             cmd::GIT_STATUS,
             cmd::GIT_DIFF,
             cmd::GIT_OVERVIEW,

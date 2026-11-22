@@ -7,7 +7,12 @@ extern "C" {
     type JsTerminal;
 
     #[wasm_bindgen(js_namespace = GryphusJs, js_name = createTerminal)]
-    fn create_terminal(el: &JsValue, on_data: &JsValue, on_resize: &JsValue) -> JsTerminal;
+    fn create_terminal(
+        el: &JsValue,
+        on_data: &JsValue,
+        on_resize: &JsValue,
+        on_paste_non_text: &JsValue,
+    ) -> JsTerminal;
 
     #[wasm_bindgen(method)]
     fn channel(this: &JsTerminal) -> JsValue;
@@ -19,6 +24,8 @@ extern "C" {
     fn focus(this: &JsTerminal);
     #[wasm_bindgen(method)]
     fn write(this: &JsTerminal, text: &str);
+    #[wasm_bindgen(method)]
+    fn paste(this: &JsTerminal, text: &str);
     #[wasm_bindgen(method)]
     fn dispose(this: &JsTerminal);
 }
@@ -36,6 +43,7 @@ pub struct Terminal {
     js: JsTerminal,
     _on_data: Closure<dyn FnMut(String)>,
     _on_resize: Closure<dyn FnMut(u16, u16)>,
+    _on_paste: Closure<dyn FnMut()>,
 }
 
 impl Terminal {
@@ -44,23 +52,32 @@ impl Terminal {
         el: &impl AsRef<JsValue>,
         on_data: impl FnMut(String) + 'static,
         on_resize: impl FnMut(u16, u16) + 'static,
+        on_paste_non_text: impl FnMut() + 'static,
     ) -> Result<Self, String> {
         super::glue::ensure_loaded().await?;
-        Ok(Self::new(el, on_data, on_resize))
+        Ok(Self::new(el, on_data, on_resize, on_paste_non_text))
     }
 
     fn new(
         el: &impl AsRef<JsValue>,
         on_data: impl FnMut(String) + 'static,
         on_resize: impl FnMut(u16, u16) + 'static,
+        on_paste_non_text: impl FnMut() + 'static,
     ) -> Self {
         let on_data = Closure::<dyn FnMut(String)>::new(on_data);
         let on_resize = Closure::<dyn FnMut(u16, u16)>::new(on_resize);
-        let js = create_terminal(el.as_ref(), on_data.as_ref(), on_resize.as_ref());
+        let on_paste = Closure::<dyn FnMut()>::new(on_paste_non_text);
+        let js = create_terminal(
+            el.as_ref(),
+            on_data.as_ref(),
+            on_resize.as_ref(),
+            on_paste.as_ref(),
+        );
         Self {
             js,
             _on_data: on_data,
             _on_resize: on_resize,
+            _on_paste: on_paste,
         }
     }
 
@@ -83,6 +100,11 @@ impl Terminal {
 
     pub fn write(&self, text: &str) {
         self.js.write(text);
+    }
+
+    /// Escribe `text` como si el usuario lo pegara (llega al agente).
+    pub fn paste(&self, text: &str) {
+        self.js.paste(text);
     }
 
     pub fn dispose(&self) {
